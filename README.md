@@ -71,7 +71,7 @@ SEED_ADMIN_PASSWORD="changeme123"
 SEED_DEMO="true"
 
 # Timezone
-TZ="Asia/Kathmandu"
+TiZ="Asia/Kathmandu"
 ```
 
 ---
