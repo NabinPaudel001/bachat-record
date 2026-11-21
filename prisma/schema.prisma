@@ -1,0 +1,509 @@
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "rhel-openssl-3.0.x"]
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum Role {
+  ADMIN
+  TREASURER
+  HELPER
+}
+
+enum MemberStatus {
+  ACTIVE
+  CLOSED
+}
+
+enum DueStatus {
+  PENDING
+  PARTIAL
+  PAID
+}
+
+enum FineType {
+  CONTRIBUTION
+  LOAN_INTEREST
+}
+
+enum FineStatus {
+  PENDING
+  PARTIAL
+  PAID
+  WAIVED
+}
+
+enum LoanStatus {
+  PENDING_APPROVAL
+  ACTIVE
+  CLOSED
+  REJECTED
+}
+
+enum PaymentKind {
+  CONTRIBUTION
+  LOAN
+}
+
+enum PaymentStatus {
+  PENDING_APPROVAL
+  POSTED
+  VOIDED
+}
+
+enum AllocTarget {
+  CONTRIBUTION_DUE
+  CONTRIBUTION_FINE
+  LOAN_FINE
+  LOAN_INTEREST
+  LOAN_PRINCIPAL
+  ADVANCE
+}
+
+enum RateType {
+  SAVINGS
+  LOAN
+}
+
+enum DistType {
+  INTEREST
+  BONUS
+}
+
+enum PayoutPeriod {
+  MONTHLY
+  QUARTERLY
+  SEMI_ANNUAL
+  ANNUAL
+}
+
+enum PayoutMode {
+  PAYABLE
+  REINVEST
+}
+
+enum DistStatus {
+  DRAFT
+  CONFIRMED
+  REVERSED
+}
+
+enum AccountType {
+  ASSET
+  LIABILITY
+  EQUITY
+  INCOME
+  EXPENSE
+}
+
+model User {
+  id           String    @id @default(cuid())
+  name         String
+  email        String    @unique
+  passwordHash String
+  role         Role
+  active       Boolean   @default(true)
+  failedLogins Int       @default(0)
+  lockedUntil  DateTime?
+  createdAt    DateTime  @default(now())
+}
+
+model Member {
+  id               String             @id @default(cuid())
+  memberNo         String             @unique
+  fullName         String
+  dob              DateTime?          @db.Date
+  phone            String
+  altPhone         String?
+  email            String?
+  permanentAddress String
+  currentAddress   String?
+  idNumberEnc      String?
+  photoPath        String?
+  nomineeName      String?
+  nomineeRelation  String?
+  nomineePhone     String?
+  nomineeIdEnc     String?
+  bankDetails      String?
+  joinDate         DateTime           @db.Date
+  joinBsYear       Int
+  joinBsMonth      Int
+  monthlyAmount    Decimal            @db.Decimal(14, 2)
+  advanceBalance   Decimal            @default(0) @db.Decimal(14, 2)
+  status           MemberStatus       @default(ACTIVE)
+  closedOn         DateTime?          @db.Date
+  closeReason      String?
+  previousMemberId String?
+  notes            String?
+  createdAt        DateTime           @default(now())
+  dues             ContributionDue[]
+  payments         Payment[]
+  fines            Fine[]
+  loans            Loan[]             @relation("Borrower")
+  guarantees       LoanGuarantor[]
+  documents        MemberDocument[]
+  distLines        DistributionLine[]
+
+  @@index([status, joinDate])
+}
+
+model MemberDocument {
+  id          String   @id @default(cuid())
+  memberId    String
+  member      Member   @relation(fields: [memberId], references: [id])
+  kind        String
+  storagePath String
+  createdAt   DateTime @default(now())
+}
+
+model ClassRule {
+  id         String    @id @default(cuid())
+  label      String
+  joinedFrom DateTime? @db.Date
+  joinedTo   DateTime? @db.Date
+}
+
+model Setting {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt
+}
+
+model RateHistory {
+  id            String   @id @default(cuid())
+  type          RateType
+  ratePercent   Decimal  @db.Decimal(7, 4)
+  effectiveFrom DateTime @db.Date
+  reason        String?
+  createdById   String
+  createdAt     DateTime @default(now())
+
+  @@index([type, effectiveFrom])
+}
+
+model ContributionDue {
+  id         String    @id @default(cuid())
+  memberId   String
+  member     Member    @relation(fields: [memberId], references: [id])
+  bsYear     Int
+  bsMonth    Int
+  monthStart DateTime  @db.Date
+  graceEnd   DateTime  @db.Date
+  amount     Decimal   @db.Decimal(14, 2)
+  paidAmount Decimal   @default(0) @db.Decimal(14, 2)
+  status     DueStatus @default(PENDING)
+  fines      Fine[]
+
+  @@unique([memberId, bsYear, bsMonth])
+  @@index([status, monthStart])
+}
+
+model Payment {
+  id              String              @id @default(cuid())
+  receiptNo       String              @unique
+  memberId        String
+  member          Member              @relation(fields: [memberId], references: [id])
+  kind            PaymentKind
+  loanId          String?
+  amount          Decimal             @db.Decimal(14, 2)
+  method          String
+  paymentDate     DateTime            @db.Date
+  status          PaymentStatus       @default(POSTED)
+  idempotencyKey  String              @unique
+  note            String?
+  enteredById     String
+  approvedById    String?
+  journalId       String?
+  voidedById      String?
+  voidReason      String?
+  createdAt       DateTime            @default(now())
+  allocations     PaymentAllocation[]
+
+  @@index([memberId, paymentDate])
+}
+
+model PaymentAllocation {
+  id               String      @id @default(cuid())
+  paymentId        String
+  payment          Payment     @relation(fields: [paymentId], references: [id])
+  target           AllocTarget
+  dueId            String?
+  fineId           String?
+  interestPeriodId String?
+  loanId           String?
+  amount           Decimal     @db.Decimal(14, 2)
+}
+
+model Fine {
+  id                   String           @id @default(cuid())
+  memberId             String
+  member               Member           @relation(fields: [memberId], references: [id])
+  type                 FineType
+  amount               Decimal          @db.Decimal(14, 2)
+  paidAmount           Decimal          @default(0) @db.Decimal(14, 2)
+  waivedAmount         Decimal          @default(0) @db.Decimal(14, 2)
+  status               FineStatus       @default(PENDING)
+  postedOn             DateTime         @db.Date
+  contributionDueId    String?
+  contributionDue      ContributionDue? @relation(fields: [contributionDueId], references: [id])
+  loanInterestPeriodId String?
+  waivedById           String?
+  waiveReason          String?
+
+  @@unique([type, contributionDueId])
+  @@unique([type, loanInterestPeriodId])
+  @@index([memberId, status])
+}
+
+model Loan {
+  id                   String               @id @default(cuid())
+  loanNo               String               @unique
+  borrowerId           String
+  borrower             Member               @relation("Borrower", fields: [borrowerId], references: [id])
+  amount               Decimal              @db.Decimal(14, 2)
+  principalOutstanding Decimal              @db.Decimal(14, 2)
+  rateAtStart          Decimal              @db.Decimal(7, 4)
+  purpose              String?
+  disbursedOn          DateTime?            @db.Date
+  status               LoanStatus           @default(PENDING_APPROVAL)
+  approvedById         String?
+  closedOn             DateTime?            @db.Date
+  guarantors           LoanGuarantor[]
+  periods              LoanInterestPeriod[]
+  events               LoanEvent[]
+}
+
+model LoanGuarantor {
+  id         String    @id @default(cuid())
+  loanId     String
+  loan       Loan      @relation(fields: [loanId], references: [id])
+  memberId   String
+  member     Member    @relation(fields: [memberId], references: [id])
+  replacedOn DateTime? @db.Date
+
+  @@unique([loanId, memberId])
+}
+
+model LoanInterestPeriod {
+  id          String   @id @default(cuid())
+  loanId      String
+  loan        Loan     @relation(fields: [loanId], references: [id])
+  bsYear      Int
+  bsMonth     Int
+  periodStart DateTime @db.Date
+  periodEnd   DateTime @db.Date
+  graceEnd    DateTime @db.Date
+  accrued     Decimal  @default(0) @db.Decimal(14, 2)
+  paid        Decimal  @default(0) @db.Decimal(14, 2)
+  capitalised Decimal  @default(0) @db.Decimal(14, 2)
+  finalised   Boolean  @default(false)
+
+  @@unique([loanId, bsYear, bsMonth])
+}
+
+model LoanEvent {
+  id             String   @id @default(cuid())
+  loanId         String
+  loan           Loan     @relation(fields: [loanId], references: [id])
+  type           String
+  amount         Decimal  @db.Decimal(14, 2)
+  eventDate      DateTime @db.Date
+  principalAfter Decimal  @db.Decimal(14, 2)
+  journalId      String?
+  reason         String?
+}
+
+model SavingsAccrual {
+  id          String   @id @default(cuid())
+  memberId    String
+  day         DateTime @db.Date
+  base        Decimal  @db.Decimal(14, 2)
+  ratePercent Decimal  @db.Decimal(7, 4)
+  accrued     Decimal  @db.Decimal(18, 6)
+
+  @@unique([memberId, day])
+}
+
+model LoanAccrual {
+  id          String   @id @default(cuid())
+  loanId      String
+  day         DateTime @db.Date
+  principal   Decimal  @db.Decimal(14, 2)
+  ratePercent Decimal  @db.Decimal(7, 4)
+  accrued     Decimal  @db.Decimal(18, 6)
+
+  @@unique([loanId, day])
+}
+
+model InvestmentCategory {
+  id          String       @id @default(cuid())
+  name        String       @unique
+  isSystem    Boolean      @default(false)
+  active      Boolean      @default(true)
+  sortOrder   Int          @default(0)
+  accountId   String?
+  investments Investment[]
+}
+
+model Investment {
+  id           String                @id @default(cuid())
+  categoryId   String
+  category     InvestmentCategory    @relation(fields: [categoryId], references: [id])
+  name         String
+  units        Decimal?              @db.Decimal(18, 4)
+  buyDate      DateTime              @db.Date
+  cost         Decimal               @db.Decimal(14, 2)
+  currentValue Decimal               @db.Decimal(14, 2)
+  valuedOn     DateTime              @db.Date
+  status       String                @default("ACTIVE")
+  soldOn       DateTime?             @db.Date
+  saleAmount   Decimal?              @db.Decimal(14, 2)
+  notes        String?
+  valuations   InvestmentValuation[]
+}
+
+model InvestmentValuation {
+  id           String     @id @default(cuid())
+  investmentId String
+  investment   Investment @relation(fields: [investmentId], references: [id])
+  day          DateTime   @db.Date
+  value        Decimal    @db.Decimal(14, 2)
+}
+
+model OtherAsset {
+  id           String   @id @default(cuid())
+  name         String
+  acquiredOn   DateTime @db.Date
+  cost         Decimal  @db.Decimal(14, 2)
+  currentValue Decimal  @db.Decimal(14, 2)
+  notes        String?
+}
+
+model Account {
+  id       String      @id @default(cuid())
+  code     String      @unique
+  name     String
+  type     AccountType
+  parentId String?
+  isSystem Boolean     @default(false)
+  lines    JournalLine[]
+}
+
+model Journal {
+  id              String        @id @default(cuid())
+  date            DateTime      @db.Date
+  description     String
+  refType         String?
+  refId           String?
+  reversesId      String?       @unique
+  reversalReason  String?
+  createdById     String
+  createdAt       DateTime      @default(now())
+  lines           JournalLine[]
+
+  @@index([date])
+}
+
+model JournalLine {
+  id        String  @id @default(cuid())
+  journalId String
+  journal   Journal @relation(fields: [journalId], references: [id])
+  accountId String
+  account   Account @relation(fields: [accountId], references: [id])
+  memberId  String?
+  debit     Decimal @default(0) @db.Decimal(14, 2)
+  credit    Decimal @default(0) @db.Decimal(14, 2)
+
+  @@index([accountId])
+  @@index([memberId])
+}
+
+model AccountingPeriod {
+  id         String    @id @default(cuid())
+  name       String
+  startDate  DateTime  @db.Date
+  endDate    DateTime  @db.Date
+  lockedAt   DateTime?
+  lockedById String?
+}
+
+model Expense {
+  id          String   @id @default(cuid())
+  date        DateTime @db.Date
+  accountId   String
+  amount      Decimal  @db.Decimal(14, 2)
+  payee       String?
+  note        String?
+  receiptPath String?
+  journalId   String?
+}
+
+model OtherIncome {
+  id        String   @id @default(cuid())
+  date      DateTime @db.Date
+  accountId String
+  amount    Decimal  @db.Decimal(14, 2)
+  source    String?
+  note      String?
+  journalId String?
+}
+
+model Distribution {
+  id             String       @id @default(cuid())
+  type           DistType
+  period         PayoutPeriod
+  fromDate       DateTime     @db.Date
+  toDate         DateTime     @db.Date
+  percent        Decimal?     @db.Decimal(9, 5)
+  totalAmount    Decimal      @db.Decimal(14, 2)
+  reservePercent Decimal?     @db.Decimal(7, 4)
+  reserveAmount  Decimal?     @db.Decimal(14, 2)
+  includeUnpaid  Boolean
+  payoutMode     PayoutMode
+  status         DistStatus   @default(DRAFT)
+  confirmedById  String?
+  confirmedAt    DateTime?
+  journalId      String?
+  lines          DistributionLine[]
+}
+
+model DistributionLine {
+  id             String       @id @default(cuid())
+  distributionId String
+  distribution   Distribution @relation(fields: [distributionId], references: [id])
+  memberId       String
+  member         Member       @relation(fields: [memberId], references: [id])
+  base           Decimal      @db.Decimal(14, 2)
+  amount         Decimal      @db.Decimal(14, 2)
+
+  @@unique([distributionId, memberId])
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String
+  action    String
+  entity    String
+  entityId  String?
+  before    Json?
+  after     Json?
+  ip        String?
+  createdAt DateTime @default(now())
+
+  @@index([entity, entityId])
+}
+
+model CronRun {
+  id      String   @id @default(cuid())
+  job     String
+  runDate DateTime @db.Date
+  status  String
+  details Json?
+
+  @@unique([job, runDate])
+}
