@@ -47,8 +47,17 @@ export async function postJournal(
   externalTx?: Prisma.TransactionClient
 ) {
   const runner = async (tx: Prisma.TransactionClient) => {
-    // 1. Period lock validation
-    const locked = await isPeriodLocked(tx, params.date);
+    const codes = params.lines.map((l) => l.accountCode);
+
+    // 1. Period lock validation & Pre-fetch account IDs concurrently
+    const [locked, accounts] = await Promise.all([
+      isPeriodLocked(tx, params.date),
+      tx.account.findMany({
+        where: { code: { in: codes } },
+        select: { id: true, code: true },
+      }),
+    ]);
+
     if (locked) {
       throw new Error(`Cannot post journal: Accounting period for date ${params.date.toISOString().split('T')[0]} is locked.`);
     }
@@ -64,12 +73,6 @@ export async function postJournal(
       memberId?: string | null;
     }[] = [];
 
-    // Pre-fetch account IDs by code
-    const codes = params.lines.map((l) => l.accountCode);
-    const accounts = await tx.account.findMany({
-      where: { code: { in: codes } },
-      select: { id: true, code: true },
-    });
     const codeMap = new Map(accounts.map((a) => [a.code, a.id]));
 
     for (const line of params.lines) {
@@ -139,7 +142,7 @@ export async function postJournal(
   if (externalTx) {
     return runner(externalTx);
   } else {
-    return prisma.$transaction(runner);
+    return prisma.$transaction(runner, { maxWait: 10000, timeout: 30000 });
   }
 }
 
@@ -218,6 +221,6 @@ export async function reverseJournal(
   if (externalTx) {
     return runner(externalTx);
   } else {
-    return prisma.$transaction(runner);
+    return prisma.$transaction(runner, { maxWait: 10000, timeout: 30000 });
   }
 }

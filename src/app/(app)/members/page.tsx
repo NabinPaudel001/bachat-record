@@ -1,5 +1,5 @@
 import { prisma } from '@/server/db';
-import { determineMemberClass } from '@/server/services/memberService';
+import { getClassRules, evaluateMemberClass } from '@/server/services/memberService';
 import { formatBSDate, formatNPR } from '@/lib/format';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -7,6 +7,7 @@ import Link from 'next/link';
 import Decimal from 'decimal.js';
 import { AddMemberModal } from './add-member-modal';
 import { AddExistingMemberModal } from './add-existing-member-modal';
+import { ResetAllRecordsModal } from './reset-all-modal';
 
 export const runtime = 'nodejs';
 
@@ -17,9 +18,12 @@ export default async function MembersPage({
 }) {
   const params = await searchParams;
   const q = params.q?.trim().toLowerCase();
-  const statusFilter = params.status || 'ACTIVE';
-  const classFilter = params.class;
+  const rawStatus = params.status?.trim();
+  const statusFilter = rawStatus === 'ALL' ? 'ALL' : (rawStatus || 'ACTIVE');
+  const rawClass = params.class?.trim();
+  const classFilter = rawClass && rawClass !== 'ALL' ? rawClass : undefined;
 
+  // Single query for members with their dues
   const rawMembers = await prisma.member.findMany({
     where: {
       status: statusFilter === 'ALL' ? undefined : (statusFilter as 'ACTIVE' | 'CLOSED'),
@@ -30,40 +34,49 @@ export default async function MembersPage({
     orderBy: { memberNo: 'asc' },
   });
 
-  // Calculate totals and classes
-  const membersWithStats = await Promise.all(
-    rawMembers.map(async (m) => {
-      const memberClass = await determineMemberClass(m.joinDate);
+  // Fetch class rules once (cached in memory) to prevent connection pool exhaustion
+  const rules = await getClassRules();
 
-      let deposited = new Decimal(0);
-      let pending = new Decimal(0);
+  // Calculate totals and classes synchronously in memory
+  const membersWithStats = rawMembers.map((m) => {
+    const memberClass = evaluateMemberClass(m.joinDate, m.notes, rules);
 
-      for (const d of m.dues) {
-        deposited = deposited.plus(new Decimal(d.paidAmount.toString()));
-        if (d.status !== 'PAID') {
-          pending = pending.plus(
-            new Decimal(d.amount.toString()).minus(new Decimal(d.paidAmount.toString()))
-          );
-        }
+    let deposited = new Decimal(0);
+    let pending = new Decimal(0);
+
+    for (const d of m.dues) {
+      deposited = deposited.plus(new Decimal(d.paidAmount.toString()));
+      if (d.status !== 'PAID') {
+        pending = pending.plus(
+          new Decimal(d.amount.toString()).minus(new Decimal(d.paidAmount.toString()))
+        );
       }
+    }
 
-      return {
-        ...m,
-        memberClass,
-        deposited,
-        pending,
-      };
-    })
-  );
+    return {
+      ...m,
+      memberClass,
+      deposited,
+      pending,
+    };
+  });
 
   // Filter in memory for search & class
   const filtered = membersWithStats.filter((m) => {
-    if (classFilter && m.memberClass !== classFilter) return false;
+    if (classFilter) {
+      const normFilter = classFilter.replace(/^Class\s*/i, '').trim().toUpperCase();
+      const normMember = (m.memberClass || '').replace(/^Class\s*/i, '').trim().toUpperCase();
+      if (normMember !== normFilter) return false;
+    }
     if (q) {
-      const matchNo = m.memberNo.toLowerCase().includes(q);
+      const cleanQ = q.replace(/[^a-z0-9]/g, '');
+      const matchNo =
+        m.memberNo.toLowerCase().includes(q) ||
+        (cleanQ.length > 0 && m.memberNo.toLowerCase().replace(/[^a-z0-9]/g, '').includes(cleanQ));
       const matchName = m.fullName.toLowerCase().includes(q);
       const matchPhone = m.phone.toLowerCase().includes(q);
-      if (!matchNo && !matchName && !matchPhone) return false;
+      const matchAltPhone = m.altPhone ? m.altPhone.toLowerCase().includes(q) : false;
+      if (!matchNo && !matchName && !matchPhone && !matchAltPhone) return false;
     }
     return true;
   });
@@ -81,6 +94,7 @@ export default async function MembersPage({
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <ResetAllRecordsModal />
           <AddExistingMemberModal />
           <AddMemberModal />
         </div>
@@ -105,7 +119,12 @@ export default async function MembersPage({
       {/* Filters */}
       <Card>
         <CardContent className="p-4">
-          <form method="GET" className="flex flex-wrap items-center gap-3">
+          <form
+            method="GET"
+            action="/members"
+            key={`${params.q ?? ''}-${statusFilter}-${params.class ?? ''}`}
+            className="flex flex-wrap items-center gap-3"
+          >
             <input
               type="text"
               name="q"
@@ -116,7 +135,7 @@ export default async function MembersPage({
             <select
               name="status"
               defaultValue={statusFilter}
-              className="h-9 rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm"
+              className="h-9 rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm cursor-pointer"
             >
               <option value="ACTIVE">Active Members</option>
               <option value="CLOSED">Closed Members</option>
@@ -125,25 +144,28 @@ export default async function MembersPage({
             <select
               name="class"
               defaultValue={classFilter ?? ''}
-              className="h-9 rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm"
+              className="h-9 rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm cursor-pointer"
             >
               <option value="">All Classes</option>
               <option value="A">Class A</option>
               <option value="B">Class B</option>
               <option value="C">Class C</option>
+              <option value="D">Class D</option>
             </select>
             <button
               type="submit"
-              className="h-9 rounded-md bg-secondary px-4 py-1 text-sm font-medium hover:bg-secondary/80"
+              className="h-9 rounded-md bg-secondary px-4 py-1 text-sm font-medium hover:bg-secondary/80 cursor-pointer"
             >
               Filter
             </button>
-            <Link
-              href="/members"
-              className="text-xs text-muted-foreground hover:underline ml-auto"
-            >
-              Clear filters
-            </Link>
+            {(params.q || (params.status && params.status !== 'ACTIVE') || params.class) && (
+              <Link
+                href="/members"
+                className="text-xs text-muted-foreground hover:underline ml-auto"
+              >
+                Clear filters
+              </Link>
+            )}
           </form>
         </CardContent>
       </Card>
@@ -191,7 +213,7 @@ export default async function MembersPage({
                       )}
                     </td>
                     <td className="p-3">
-                      <Badge variant="outline">{m.memberClass}</Badge>
+                      <Badge variant="outline">Class {m.memberClass.replace(/^Class\s*/i, '')}</Badge>
                     </td>
                     <td className="p-3 text-muted-foreground">{m.phone}</td>
                     <td className="p-3 text-muted-foreground">

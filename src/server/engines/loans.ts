@@ -1,4 +1,5 @@
 import Decimal from 'decimal.js';
+import { bsFromAd, bsMonthRange, graceEndOf, bsMonthDays } from './bs';
 
 export interface LoanFine {
   id: string;
@@ -238,4 +239,92 @@ export function validateGuarantors(
   }
 
   return { valid: true };
+}
+
+export interface LoanInterestPeriodSeed {
+  id: string;
+  disbursedOn: Date;
+  principalOutstanding: Decimal | string | number;
+  rate: Decimal | string | number;
+}
+
+export interface GeneratedLoanPeriod {
+  bsYear: number;
+  bsMonth: number;
+  periodStart: Date;
+  periodEnd: Date;
+  graceEnd: Date;
+  accrued: Decimal;
+  daysElapsed: number;
+  totalDaysInMonth: number;
+  finalised: boolean;
+  isEligibleForFine: boolean;
+}
+
+/**
+ * Generate interest periods for an active loan up to today on a daily basis.
+ * - For past months: full month's accrued interest, marked finalised.
+ *   Eligible for Rs 100 fine if graceEnd (day 10 of next month) has passed.
+ * - For current month: live daily accrued interest up to today, marked NOT finalised.
+ *   NOT eligible for fine until month ends + 10 days grace period.
+ */
+export function generateLoanInterestPeriods(
+  loan: LoanInterestPeriodSeed,
+  today: Date,
+  basis: number = 365,
+  graceDay: number = 10
+): GeneratedLoanPeriod[] {
+  const principal = new Decimal(loan.principalOutstanding.toString());
+  if (principal.lte(0)) return [];
+
+  const rate = new Decimal(loan.rate.toString());
+  const todayBSDate = bsFromAd(today);
+  const disburseBSDate = bsFromAd(loan.disbursedOn);
+
+  let y = disburseBSDate.year;
+  let m = disburseBSDate.month;
+  const targetYear = todayBSDate.year;
+  const targetMonth = todayBSDate.month;
+
+  const periods: GeneratedLoanPeriod[] = [];
+  const dailyRate = rate.div(100).div(basis);
+
+  while (y < targetYear || (y === targetYear && m <= targetMonth)) {
+    const { start, end } = bsMonthRange(y, m);
+    const graceEnd = graceEndOf(y, m, graceDay);
+    const totalDaysInMonth = bsMonthDays(y, m);
+
+    const isStartMonth = y === disburseBSDate.year && m === disburseBSDate.month;
+    const isCurrentMonth = y === targetYear && m === targetMonth;
+
+    const startDay = isStartMonth ? Math.min(disburseBSDate.day, totalDaysInMonth) : 1;
+    const endDay = isCurrentMonth ? Math.min(todayBSDate.day, totalDaysInMonth) : totalDaysInMonth;
+
+    const daysElapsed = Math.max(0, endDay - startDay + 1);
+    const accrued = principal.mul(dailyRate).mul(daysElapsed).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+
+    const finalised = !isCurrentMonth && end.getTime() < today.getTime();
+    const isEligibleForFine = finalised && graceEnd.getTime() < today.getTime();
+
+    periods.push({
+      bsYear: y,
+      bsMonth: m,
+      periodStart: start,
+      periodEnd: end,
+      graceEnd,
+      accrued,
+      daysElapsed,
+      totalDaysInMonth,
+      finalised,
+      isEligibleForFine,
+    });
+
+    m++;
+    if (m > 12) {
+      y++;
+      m = 1;
+    }
+  }
+
+  return periods;
 }

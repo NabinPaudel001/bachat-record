@@ -4,11 +4,16 @@ import { useState, useMemo, useRef, useEffect } from 'react';
 import { Card, CardHeader, CardTitle, CardContent, CardFooter } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { allocateContribution } from '@/server/engines/contributions';
-import { formatNPR, bsMonthName } from '@/lib/format';
+import { NepaliDatePicker } from '@/components/ui/nepali-date-picker';
+import {
+  calculateMemberFinancialSummary,
+  allocateMemberPayment,
+  PaymentType,
+} from '@/server/engines/paymentAllocation';
+import { formatNPR } from '@/lib/format';
 import { recordPaymentAction } from './actions';
 import { useRouter } from 'next/navigation';
-import { Search, X } from 'lucide-react';
+import { Search, X, CheckCircle2, AlertCircle, Info, ArrowRight } from 'lucide-react';
 
 export interface MemberOption {
   id: string;
@@ -16,9 +21,37 @@ export interface MemberOption {
   fullName: string;
   monthlyAmount: string;
   advanceBalance: string;
-  loans: { id: string; loanNo: string; principalOutstanding: string }[];
-  dues: { id: string; bsYear: number; bsMonth: number; amount: string; paidAmount: string }[];
-  fines: { id: string; type: string; amount: string; paidAmount: string; waivedAmount: string; postedOn: string }[];
+  loans: {
+    id: string;
+    loanNo: string;
+    principalOutstanding: string;
+    periods: {
+      id: string;
+      bsYear: number;
+      bsMonth: number;
+      accrued: string;
+      paid: string;
+      capitalised: string;
+      finalised: boolean;
+    }[];
+  }[];
+  dues: {
+    id: string;
+    bsYear: number;
+    bsMonth: number;
+    amount: string;
+    paidAmount: string;
+    status: string;
+  }[];
+  fines: {
+    id: string;
+    type: string;
+    amount: string;
+    paidAmount: string;
+    waivedAmount: string;
+    postedOn: string;
+    status: string;
+  }[];
 }
 
 function MemberSearchSelect({
@@ -62,10 +95,15 @@ function MemberSearchSelect({
       {selected && !isOpen ? (
         <div
           className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm flex items-center justify-between cursor-pointer hover:bg-muted/50"
-          onClick={() => { setIsOpen(true); setQuery(''); }}
+          onClick={() => {
+            setIsOpen(true);
+            setQuery('');
+          }}
         >
           <span className="flex items-center gap-2">
-            <Badge variant="outline" className="text-[10px] font-mono">{selected.memberNo}</Badge>
+            <Badge variant="outline" className="text-[10px] font-mono">
+              {selected.memberNo}
+            </Badge>
             <span className="truncate">{selected.fullName}</span>
           </span>
           <X className="h-3.5 w-3.5 text-muted-foreground" />
@@ -77,7 +115,10 @@ function MemberSearchSelect({
             <input
               type="text"
               value={query}
-              onChange={(e) => { setQuery(e.target.value); setIsOpen(true); }}
+              onChange={(e) => {
+                setQuery(e.target.value);
+                setIsOpen(true);
+              }}
               onFocus={() => setIsOpen(true)}
               placeholder="Search by member code or name..."
               className="h-9 w-full rounded-md border border-input bg-background pl-8 pr-3 text-sm"
@@ -105,7 +146,9 @@ function MemberSearchSelect({
                     <span className="font-mono text-xs text-muted-foreground w-16 shrink-0">{m.memberNo}</span>
                     <span className="truncate">{m.fullName}</span>
                     {m.loans.length > 0 && (
-                      <Badge variant="secondary" className="ml-auto text-[9px]">{m.loans.length} loan(s)</Badge>
+                      <Badge variant="secondary" className="ml-auto text-[9px]">
+                        {m.loans.length} loan(s)
+                      </Badge>
                     )}
                   </button>
                 ))
@@ -127,11 +170,12 @@ export function PaymentForm({
 }) {
   const router = useRouter();
   const [memberId, setMemberId] = useState(defaultMemberId || (members[0]?.id ?? ''));
-  const [kind, setKind] = useState<'CONTRIBUTION' | 'LOAN'>('CONTRIBUTION');
+  const [paymentType, setPaymentType] = useState<PaymentType>('AUTOMATIC');
   const [loanId, setLoanId] = useState('');
   const [amount, setAmount] = useState('1000');
   const [method, setMethod] = useState('CASH');
   const [receiptNo, setReceiptNo] = useState(`RCP-${Math.floor(100000 + Math.random() * 900000)}`);
+  const [paymentDate, setPaymentDate] = useState<string>(() => new Date().toISOString());
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -147,27 +191,43 @@ export function PaymentForm({
     } else {
       setLoanId('');
     }
-  }, [selectedMember, kind]);
+  }, [selectedMember]);
 
-  const selectedLoan = selectedMember?.loans.find((l) => l.id === loanId);
+  // Compute live member records and advance deduction
+  const memberSummary = useMemo(() => {
+    if (!selectedMember) return null;
+    return calculateMemberFinancialSummary({
+      advanceBalance: selectedMember.advanceBalance,
+      dues: selectedMember.dues,
+      fines: selectedMember.fines,
+      loans: selectedMember.loans,
+    });
+  }, [selectedMember]);
 
-  // Compute live contribution allocation preview
-  let allocationPreview = null;
-  if (selectedMember && kind === 'CONTRIBUTION') {
-    const amt = parseFloat(amount) || 0;
-    if (amt > 0) {
-      try {
-        allocationPreview = allocateContribution(
-          amt,
-          selectedMember.dues,
-          selectedMember.fines.map((f) => ({ ...f, postedOn: new Date(f.postedOn) })),
-          parseFloat(selectedMember.advanceBalance) || 0
-        );
-      } catch {
-        allocationPreview = null;
-      }
+  // Compute live automatic allocation preview
+  const allocationResult = useMemo(() => {
+    if (!selectedMember) return null;
+    const numAmt = parseFloat(amount) || 0;
+    if (numAmt <= 0) return null;
+
+    try {
+      return allocateMemberPayment({
+        amount: numAmt,
+        paymentType,
+        dues: selectedMember.dues,
+        fines: selectedMember.fines,
+        loans: selectedMember.loans,
+        selectedLoanId: loanId || undefined,
+      });
+    } catch {
+      return null;
     }
-  }
+  }, [selectedMember, paymentType, amount, loanId]);
+
+  const isLoanSpecificType =
+    paymentType === 'LOAN_PRINCIPAL' ||
+    paymentType === 'LOAN_INTEREST' ||
+    paymentType === 'LOAN_FINE';
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -180,9 +240,9 @@ export function PaymentForm({
       return;
     }
 
-    if (kind === 'LOAN') {
+    if (isLoanSpecificType) {
       if (!selectedMember || selectedMember.loans.length === 0) {
-        setError('The selected member has no active loans to repay.');
+        setError('The selected member has no active loans for this loan payment type.');
         return;
       }
       if (!loanId) {
@@ -197,11 +257,11 @@ export function PaymentForm({
     try {
       const res = await recordPaymentAction({
         memberId,
-        kind,
-        loanId: kind === 'LOAN' ? loanId : undefined,
+        paymentType,
+        loanId: loanId || undefined,
         amount: numAmount,
         method,
-        paymentDate: new Date().toISOString(),
+        paymentDate,
         receiptNo,
         idempotencyKey,
       });
@@ -222,19 +282,22 @@ export function PaymentForm({
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
-      <Card>
+      {/* Member Selection & Financial Records Display */}
+      <Card className="border-border">
         <CardHeader className="p-4 border-b">
           <CardTitle className="text-base">Payment Details</CardTitle>
         </CardHeader>
-        <CardContent className="p-4 space-y-4">
+        <CardContent className="p-4 space-y-5">
           {error && (
-            <div className="rounded bg-destructive/10 p-3 text-destructive text-sm">
-              {error}
+            <div className="rounded bg-destructive/10 p-3 text-destructive text-sm flex items-center gap-2">
+              <AlertCircle className="h-4 w-4 shrink-0" />
+              <span>{error}</span>
             </div>
           )}
           {success && (
-            <div className="rounded bg-emerald-500/10 p-3 text-emerald-700 text-sm font-medium">
-              {success}
+            <div className="rounded bg-emerald-500/10 p-3 text-emerald-700 text-sm font-medium flex items-center gap-2">
+              <CheckCircle2 className="h-4 w-4 shrink-0" />
+              <span>{success}</span>
             </div>
           )}
 
@@ -254,27 +317,186 @@ export function PaymentForm({
             />
 
             <div className="space-y-1">
-              <label className="text-xs font-semibold">Payment Kind *</label>
+              <label className="text-xs font-semibold">Payment Type *</label>
               <select
-                value={kind}
-                onChange={(e) => {
-                  const newKind = e.target.value as 'CONTRIBUTION' | 'LOAN';
-                  setKind(newKind);
-                  if (newKind === 'LOAN' && selectedMember && selectedMember.loans.length > 0) {
-                    setLoanId(selectedMember.loans[0].id);
-                  }
-                }}
-                className="h-9 w-full rounded border bg-background px-3 text-sm"
+                value={paymentType}
+                onChange={(e) => setPaymentType(e.target.value as PaymentType)}
+                className="h-9 w-full rounded border bg-background px-3 text-sm font-medium"
               >
-                <option value="CONTRIBUTION">Monthly Contribution</option>
-                <option value="LOAN">Loan Repayment</option>
+                <option value="AUTOMATIC">Automatic Allocation</option>
+                <option value="MONTHLY_LEVY_CONTRIBUTION">Monthly Levy Contribution</option>
+                <option value="MONTHLY_LEVY_FINE">Monthly Levy Fine Payment</option>
+                <option value="LOAN_INTEREST">Loan Interest Repayment</option>
+                <option value="LOAN_FINE">Loan Fine Payment</option>
+                <option value="LOAN_PRINCIPAL">Loan Principal Repayment</option>
               </select>
             </div>
           </div>
 
-          {kind === 'LOAN' && (
+          {/* Member Financial Status Grid */}
+          {memberSummary && (
+            <div className="rounded-lg border bg-muted/20 p-4 space-y-3">
+              <div className="flex items-center justify-between border-b pb-2">
+                <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                  Member Financial Records ({selectedMember?.fullName})
+                </span>
+                <span className="text-[11px] font-mono text-muted-foreground">
+                  {selectedMember?.memberNo}
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 text-xs">
+                {/* 1. Monthly Levy Accumulated */}
+                <div className="p-2.5 rounded border bg-background space-y-1">
+                  <span className="text-muted-foreground block font-medium">Monthly Levy Accumulated</span>
+                  <div className="flex items-baseline gap-1.5">
+                    <span className="font-mono text-sm font-bold text-emerald-600">
+                      {formatNPR(memberSummary.monthlyLevyAccumulatedAmount.toString())}
+                    </span>
+                    <span className="text-muted-foreground text-[11px]">
+                      ({memberSummary.monthlyLevyAccumulatedMonths}{' '}
+                      {memberSummary.monthlyLevyAccumulatedMonths === 1 ? 'month' : 'months'})
+                    </span>
+                  </div>
+                </div>
+
+                {/* 2. Monthly Levy Due */}
+                <div className="p-2.5 rounded border bg-background space-y-1">
+                  <span className="text-muted-foreground block font-medium">Monthly Levy Due</span>
+                  <div className="flex items-baseline gap-1.5">
+                    <span
+                      className={`font-mono text-sm font-bold ${
+                        memberSummary.monthlyLevyDueAmount.gt(0) ? 'text-amber-600' : 'text-muted-foreground'
+                      }`}
+                    >
+                      {formatNPR(memberSummary.monthlyLevyDueAmount.toString())}
+                    </span>
+                    <span className="text-muted-foreground text-[11px]">
+                      ({memberSummary.monthlyLevyDueMonths}{' '}
+                      {memberSummary.monthlyLevyDueMonths === 1 ? 'month' : 'months'})
+                    </span>
+                  </div>
+                </div>
+
+                {/* 3. Monthly Levy Fine */}
+                <div className="p-2.5 rounded border bg-background space-y-1">
+                  <span className="text-muted-foreground block font-medium">Monthly Levy Fine</span>
+                  <div className="flex items-baseline gap-1.5">
+                    <span
+                      className={`font-mono text-sm font-bold ${
+                        memberSummary.monthlyLevyFineAmount.gt(0) ? 'text-destructive' : 'text-muted-foreground'
+                      }`}
+                    >
+                      {formatNPR(memberSummary.monthlyLevyFineAmount.toString())}
+                    </span>
+                    {memberSummary.advanceOffset.advToLevyFine.gt(0) && (
+                      <Badge variant="outline" className="text-[10px] text-emerald-700 bg-emerald-50">
+                        -{formatNPR(memberSummary.advanceOffset.advToLevyFine.toString())} by Adv
+                      </Badge>
+                    )}
+                  </div>
+                </div>
+
+                {/* 4. Loan Amount Remaining */}
+                <div className="p-2.5 rounded border bg-background space-y-1">
+                  <span className="text-muted-foreground block font-medium">Loan Amount Remaining</span>
+                  <div className="flex items-baseline gap-1.5">
+                    <span
+                      className={`font-mono text-sm font-bold ${
+                        memberSummary.loanPrincipalRemaining.gt(0) ? 'text-blue-700' : 'text-muted-foreground'
+                      }`}
+                    >
+                      {formatNPR(memberSummary.loanPrincipalRemaining.toString())}
+                    </span>
+                    {memberSummary.advanceOffset.advToPrincipal.gt(0) && (
+                      <Badge variant="outline" className="text-[10px] text-emerald-700 bg-emerald-50">
+                        -{formatNPR(memberSummary.advanceOffset.advToPrincipal.toString())} by Adv
+                      </Badge>
+                    )}
+                  </div>
+                </div>
+
+                {/* 5. Loan Interest Remaining */}
+                <div className="p-2.5 rounded border bg-background space-y-1">
+                  <span className="text-muted-foreground block font-medium">Loan Interest Remaining</span>
+                  <div className="flex items-baseline gap-1.5">
+                    <span
+                      className={`font-mono text-sm font-bold ${
+                        memberSummary.loanInterestRemaining.gt(0) ? 'text-amber-600' : 'text-muted-foreground'
+                      }`}
+                    >
+                      {formatNPR(memberSummary.loanInterestRemaining.toString())}
+                    </span>
+                    {memberSummary.advanceOffset.advToInterest.gt(0) && (
+                      <Badge variant="outline" className="text-[10px] text-emerald-700 bg-emerald-50">
+                        -{formatNPR(memberSummary.advanceOffset.advToInterest.toString())} by Adv
+                      </Badge>
+                    )}
+                  </div>
+                </div>
+
+                {/* 6. Loan Interest Fine */}
+                <div className="p-2.5 rounded border bg-background space-y-1">
+                  <span className="text-muted-foreground block font-medium">Loan Interest Fine</span>
+                  <div className="flex items-baseline gap-1.5">
+                    <span
+                      className={`font-mono text-sm font-bold ${
+                        memberSummary.loanInterestFineAmount.gt(0) ? 'text-destructive' : 'text-muted-foreground'
+                      }`}
+                    >
+                      {formatNPR(memberSummary.loanInterestFineAmount.toString())}
+                    </span>
+                    {memberSummary.advanceOffset.advToLoanFine.gt(0) && (
+                      <Badge variant="outline" className="text-[10px] text-emerald-700 bg-emerald-50">
+                        -{formatNPR(memberSummary.advanceOffset.advToLoanFine.toString())} by Adv
+                      </Badge>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* 7. Advance Status & Deduction Breakdown */}
+              <div className="border-t pt-2.5 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <span className="font-semibold text-muted-foreground">Advance Balance:</span>
+                  <span className="font-mono font-bold text-sm text-emerald-700">
+                    {formatNPR(memberSummary.advanceOffset.remainingAdvance.toString())}
+                  </span>
+                  {memberSummary.advanceBalance.gt(0) && (
+                    <span className="text-muted-foreground text-[11px]">
+                      (Original: {formatNPR(memberSummary.advanceBalance.toString())})
+                    </span>
+                  )}
+                </div>
+
+                {(memberSummary.advanceOffset.advToLoanFine.gt(0) ||
+                  memberSummary.advanceOffset.advToLevyFine.gt(0) ||
+                  memberSummary.advanceOffset.advToInterest.gt(0) ||
+                  memberSummary.advanceOffset.advToPrincipal.gt(0)) && (
+                  <div className="text-[11px] text-muted-foreground flex items-center gap-1.5">
+                    <Info className="h-3.5 w-3.5 text-blue-500 shrink-0" />
+                    <span>
+                      Advance offset: fines{' '}
+                      {formatNPR(
+                        memberSummary.advanceOffset.advToLoanFine
+                          .plus(memberSummary.advanceOffset.advToLevyFine)
+                          .toString()
+                      )}
+                      {memberSummary.advanceOffset.advToInterest.gt(0) &&
+                        ` • interest ${formatNPR(memberSummary.advanceOffset.advToInterest.toString())}`}
+                      {memberSummary.advanceOffset.advToPrincipal.gt(0) &&
+                        ` • loan ${formatNPR(memberSummary.advanceOffset.advToPrincipal.toString())}`}
+                    </span>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Active Loan Selection if loan payment type */}
+          {(isLoanSpecificType || (paymentType === 'AUTOMATIC' && (selectedMember?.loans.length ?? 0) > 1)) && (
             <div className="space-y-1">
-              <label className="text-xs font-semibold">Active Loan *</label>
+              <label className="text-xs font-semibold">Target Loan *</label>
               {!selectedMember || selectedMember.loans.length === 0 ? (
                 <div className="text-xs text-amber-700 p-3 bg-amber-50 border border-amber-200 rounded">
                   Selected member has no active loans.
@@ -283,11 +505,11 @@ export function PaymentForm({
                 <select
                   value={loanId}
                   onChange={(e) => setLoanId(e.target.value)}
-                  className="h-9 w-full rounded border bg-background px-3 text-sm"
+                  className="h-9 w-full rounded border bg-background px-3 text-sm font-medium"
                 >
                   {selectedMember.loans.map((l) => (
                     <option key={l.id} value={l.id}>
-                      {l.loanNo} — Outstanding: {formatNPR(l.principalOutstanding)}
+                      {l.loanNo} — Principal Outstanding: {formatNPR(l.principalOutstanding)}
                     </option>
                   ))}
                 </select>
@@ -295,7 +517,7 @@ export function PaymentForm({
             </div>
           )}
 
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             <div className="space-y-1">
               <label className="text-xs font-semibold">Amount (NPR) *</label>
               <input
@@ -306,7 +528,7 @@ export function PaymentForm({
                 value={amount}
                 onChange={(e) => setAmount(e.target.value)}
                 placeholder="0.00"
-                className="h-9 w-full rounded border bg-background px-3 text-sm font-mono"
+                className="h-9 w-full rounded border bg-background px-3 text-sm font-mono font-semibold"
               />
             </div>
 
@@ -334,101 +556,125 @@ export function PaymentForm({
                 className="h-9 w-full rounded border bg-background px-3 text-sm font-mono"
               />
             </div>
+
+            <div className="space-y-1">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-semibold">Payment Date (BS) *</label>
+                <span className="text-[9px] font-mono font-medium text-amber-800 bg-amber-100 px-1.5 py-0.5 rounded border border-amber-300">
+                  Dev Only (Backdate)
+                </span>
+              </div>
+              <NepaliDatePicker
+                name="devPaymentDate"
+                placeholder="Select Date (BS)"
+                popoverAlign="right"
+                onChange={(adDate) => {
+                  const d = new Date(`${adDate}T12:00:00.000Z`);
+                  setPaymentDate(d.toISOString());
+                }}
+              />
+            </div>
           </div>
         </CardContent>
       </Card>
 
-      {/* Allocation Preview for Contribution */}
-      {kind === 'CONTRIBUTION' && allocationPreview && (
+      {/* Automatic Allocation Preview Card */}
+      {allocationResult && (
         <Card className="border-primary/40 shadow-sm">
           <CardHeader className="p-4 border-b bg-muted/20">
             <CardTitle className="text-sm font-semibold flex items-center justify-between">
-              <span>Automatic Allocation Preview</span>
-              <Badge variant="outline" className="text-xs font-mono">
+              <div className="flex items-center gap-2">
+                <span>Automatic Allocation Preview</span>
+                <Badge variant="secondary" className="text-[10px]">
+                  {paymentType === 'AUTOMATIC' ? 'Waterfall Priority' : paymentType.replace(/_/g, ' ')}
+                </Badge>
+              </div>
+              <Badge variant="outline" className="text-xs font-mono font-bold">
                 Total: {formatNPR(amount)}
               </Badge>
             </CardTitle>
           </CardHeader>
-          <CardContent className="p-4 space-y-3">
-            <div className="divide-y text-sm">
-              {allocationPreview.allocations.map((a, i) => (
-                <div key={i} className="flex justify-between items-center py-2">
-                  <div className="flex items-center gap-2">
-                    <Badge variant={a.target === 'ADVANCE' ? 'secondary' : 'default'} className="text-[10px]">
-                      {a.target}
-                    </Badge>
-                    <span className="text-xs text-muted-foreground">
-                      {a.bsYear && a.bsMonth
-                        ? `${bsMonthName(a.bsMonth)} ${a.bsYear}`
-                        : a.fineId
-                        ? 'Late Penalty'
-                        : 'Advance Credit'}
-                    </span>
-                  </div>
-                  <span className="font-mono font-medium">{formatNPR(a.amount.toString())}</span>
-                </div>
-              ))}
-            </div>
-            <div className="border-t pt-3 flex justify-between text-xs text-muted-foreground">
-              <span>Dues: {formatNPR(allocationPreview.totalAllocatedToDues.toString())}</span>
-              <span>Fines: {formatNPR(allocationPreview.totalAllocatedToFines.toString())}</span>
-              <span>Advance: {formatNPR(allocationPreview.newAdvanceBalance.toString())}</span>
-            </div>
-          </CardContent>
-          <CardFooter className="p-4 border-t bg-muted/10 flex justify-end">
-            <Button type="submit" disabled={loading || !amount || parseFloat(amount) <= 0} className="w-full sm:w-auto">
-              {loading ? 'Posting...' : 'Confirm & Post Payment'}
-            </Button>
-          </CardFooter>
-        </Card>
-      )}
 
-      {/* Loan Repayment Card */}
-      {kind === 'LOAN' && (
-        <Card className="border-blue-300 shadow-sm">
-          <CardHeader className="p-4 border-b bg-blue-50/40">
-            <CardTitle className="text-sm font-semibold flex items-center justify-between">
-              <span>Loan Repayment Summary</span>
-              {selectedLoan && (
-                <Badge variant="outline" className="text-xs font-mono bg-blue-100 text-blue-800">
-                  Loan {selectedLoan.loanNo}
-                </Badge>
-              )}
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="p-4 space-y-3">
-            {selectedLoan ? (
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-sm">
-                <div className="p-3 bg-muted/30 rounded border">
-                  <span className="text-xs text-muted-foreground block">Principal Outstanding</span>
-                  <span className="text-base font-bold font-mono text-blue-700">
-                    {formatNPR(selectedLoan.principalOutstanding)}
-                  </span>
-                </div>
-                <div className="p-3 bg-muted/30 rounded border">
-                  <span className="text-xs text-muted-foreground block">Repayment Amount</span>
-                  <span className="text-base font-bold font-mono text-emerald-600">
-                    {formatNPR(amount || '0')}
-                  </span>
-                </div>
-                <div className="p-3 bg-muted/30 rounded border">
-                  <span className="text-xs text-muted-foreground block">Estimated Remaining</span>
-                  <span className="text-base font-bold font-mono">
-                    {formatNPR(Math.max(0, parseFloat(selectedLoan.principalOutstanding) - (parseFloat(amount) || 0)).toString())}
-                  </span>
-                </div>
+          <CardContent className="p-4 space-y-4">
+            {allocationResult.allocations.length === 0 ? (
+              <div className="text-sm text-muted-foreground p-3 text-center">
+                No active obligations or advance to allocate.
               </div>
             ) : (
-              <div className="text-sm text-muted-foreground">No active loan selected.</div>
+              <div className="divide-y text-sm">
+                {allocationResult.allocations.map((a, i) => (
+                  <div key={i} className="flex justify-between items-center py-2.5 hover:bg-muted/10 px-1 rounded transition-colors">
+                    <div className="flex items-center gap-2.5">
+                      <Badge
+                        variant={
+                          a.target === 'LOAN_FINE' || a.target === 'CONTRIBUTION_FINE'
+                            ? 'destructive'
+                            : a.target === 'LOAN_INTEREST'
+                            ? 'warning'
+                            : a.target === 'LOAN_PRINCIPAL'
+                            ? 'default'
+                            : a.target === 'ADVANCE'
+                            ? 'success'
+                            : 'secondary'
+                        }
+                        className="text-[10px] uppercase font-bold"
+                      >
+                        {a.label}
+                      </Badge>
+                      <span className="text-xs text-muted-foreground flex items-center gap-1">
+                        <ArrowRight className="h-3 w-3 text-muted-foreground/60" />
+                        {a.description}
+                      </span>
+                    </div>
+                    <span className="font-mono font-bold text-foreground">
+                      {formatNPR(a.amount.toString())}
+                    </span>
+                  </div>
+                ))}
+              </div>
             )}
+
+            <div className="border-t pt-3 grid grid-cols-2 sm:grid-cols-5 gap-2 text-xs text-muted-foreground bg-muted/30 p-2.5 rounded">
+              <div>
+                <span className="block text-[10px] text-muted-foreground">Interest Fine</span>
+                <span className="font-mono font-semibold text-foreground">
+                  {formatNPR(allocationResult.totalLoanFine.toString())}
+                </span>
+              </div>
+              <div>
+                <span className="block text-[10px] text-muted-foreground">Levy Fine</span>
+                <span className="font-mono font-semibold text-foreground">
+                  {formatNPR(allocationResult.totalLevyFine.toString())}
+                </span>
+              </div>
+              <div>
+                <span className="block text-[10px] text-muted-foreground">Interest</span>
+                <span className="font-mono font-semibold text-foreground">
+                  {formatNPR(allocationResult.totalInterest.toString())}
+                </span>
+              </div>
+              <div>
+                <span className="block text-[10px] text-muted-foreground">Principal / Dues</span>
+                <span className="font-mono font-semibold text-foreground">
+                  {formatNPR(allocationResult.totalPrincipal.plus(allocationResult.totalDues).toString())}
+                </span>
+              </div>
+              <div>
+                <span className="block text-[10px] text-muted-foreground">Advance Credit</span>
+                <span className="font-mono font-semibold text-emerald-700">
+                  {formatNPR(allocationResult.totalAdvance.toString())}
+                </span>
+              </div>
+            </div>
           </CardContent>
+
           <CardFooter className="p-4 border-t bg-muted/10 flex justify-end">
             <Button
               type="submit"
-              disabled={loading || !loanId || !amount || parseFloat(amount) <= 0}
-              className="w-full sm:w-auto bg-blue-600 hover:bg-blue-700 text-white"
+              disabled={loading || !amount || parseFloat(amount) <= 0}
+              className="w-full sm:w-auto"
             >
-              {loading ? 'Posting...' : 'Confirm Loan Repayment'}
+              {loading ? 'Posting...' : 'Confirm & Post Payment'}
             </Button>
           </CardFooter>
         </Card>

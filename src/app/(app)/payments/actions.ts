@@ -1,6 +1,7 @@
 'use server';
 
 import { recordPayment } from '@/server/services/paymentService';
+import { PaymentType } from '@/server/engines/paymentAllocation';
 import { requireRole } from '@/server/auth/rbac';
 import { auditLog } from '@/server/audit';
 import { revalidatePath } from 'next/cache';
@@ -8,7 +9,8 @@ import { PaymentKind, Role } from '@prisma/client';
 
 export async function recordPaymentAction(params: {
   memberId: string;
-  kind: 'CONTRIBUTION' | 'LOAN';
+  kind?: 'CONTRIBUTION' | 'LOAN';
+  paymentType?: PaymentType;
   loanId?: string;
   amount: number;
   method: string;
@@ -23,6 +25,7 @@ export async function recordPaymentAction(params: {
     const payment = await recordPayment({
       memberId: params.memberId,
       kind: params.kind as PaymentKind,
+      paymentType: params.paymentType,
       loanId: params.loanId,
       amount: params.amount,
       method: params.method,

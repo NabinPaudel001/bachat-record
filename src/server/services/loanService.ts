@@ -91,11 +91,56 @@ export async function proposeLoan(input: ProposeLoanInput) {
 }
 
 /**
- * Approve & Disburse loan (Admin only).
+ * Update loan information before approval (Admin only).
+ */
+export async function updatePendingLoan(params: {
+  loanId: string;
+  amount?: Decimal | string | number;
+  rateAtStart?: Decimal | string | number;
+  purpose?: string;
+  adminUser: { id: string; role: Role };
+}) {
+  if (params.adminUser.role !== Role.ADMIN) {
+    throw new Error('Only Admin can update loan information.');
+  }
+
+  const loan = await prisma.loan.findUnique({
+    where: { id: params.loanId },
+  });
+
+  if (!loan) throw new Error('Loan not found');
+  if (loan.status !== LoanStatus.PENDING_APPROVAL) {
+    throw new Error(`Cannot update loan with status ${loan.status}. Only pending loans can be modified.`);
+  }
+
+  const data: Record<string, unknown> = {};
+  if (params.amount !== undefined) {
+    const dec = new Decimal(params.amount.toString());
+    data.amount = dec;
+    data.principalOutstanding = dec;
+  }
+  if (params.rateAtStart !== undefined) {
+    data.rateAtStart = new Decimal(params.rateAtStart.toString());
+  }
+  if (params.purpose !== undefined) {
+    data.purpose = params.purpose;
+  }
+
+  return prisma.loan.update({
+    where: { id: params.loanId },
+    data,
+  });
+}
+
+/**
+ * Approve & Disburse loan with optional loan info updates (Admin only).
  */
 export async function approveAndDisburseLoan(params: {
   loanId: string;
   disbursementDate: Date;
+  amount?: Decimal | string | number;
+  rateAtStart?: Decimal | string | number;
+  purpose?: string;
   adminUser: { id: string; role: Role };
 }) {
   if (params.adminUser.role !== Role.ADMIN) {
@@ -113,6 +158,13 @@ export async function approveAndDisburseLoan(params: {
       throw new Error(`Loan is already ${loan.status}.`);
     }
 
+    const finalAmount =
+      params.amount !== undefined ? new Decimal(params.amount.toString()) : loan.amount;
+    const finalRate =
+      params.rateAtStart !== undefined ? new Decimal(params.rateAtStart.toString()) : loan.rateAtStart;
+    const finalPurpose =
+      params.purpose !== undefined ? params.purpose : loan.purpose;
+
     // 1. Post Disbursement Journal:
     // Debit 1200 Loans Receivable
     // Credit 1000 Cash
@@ -124,8 +176,8 @@ export async function approveAndDisburseLoan(params: {
         refId: loan.id,
         createdById: params.adminUser.id,
         lines: [
-          { accountCode: '1200', debit: loan.amount, memberId: loan.borrowerId },
-          { accountCode: '1000', credit: loan.amount, memberId: loan.borrowerId },
+          { accountCode: '1200', debit: finalAmount, memberId: loan.borrowerId },
+          { accountCode: '1000', credit: finalAmount, memberId: loan.borrowerId },
         ],
       },
       tx
@@ -136,18 +188,22 @@ export async function approveAndDisburseLoan(params: {
       data: {
         loanId: loan.id,
         type: 'DISBURSE',
-        amount: loan.amount,
+        amount: finalAmount,
         eventDate: params.disbursementDate,
-        principalAfter: loan.amount,
+        principalAfter: finalAmount,
         journalId: journal.id,
-        reason: 'Initial loan disbursement',
+        reason: finalPurpose || 'Initial loan disbursement',
       },
     });
 
-    // 3. Update loan status to ACTIVE
+    // 3. Update loan status to ACTIVE with finalized details
     return tx.loan.update({
       where: { id: loan.id },
       data: {
+        amount: finalAmount,
+        principalOutstanding: finalAmount,
+        rateAtStart: finalRate,
+        purpose: finalPurpose,
         status: LoanStatus.ACTIVE,
         disbursedOn: params.disbursementDate,
         approvedById: params.adminUser.id,

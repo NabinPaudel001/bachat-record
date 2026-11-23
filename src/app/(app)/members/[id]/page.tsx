@@ -8,6 +8,7 @@ import { notFound } from 'next/navigation';
 import { Role } from '@prisma/client';
 import { CloseAccountModal } from './close-account-modal';
 import { EditMemberModal } from './edit-member-modal';
+import { RemoveMemberModal } from './remove-member-modal';
 import { PrintButton } from '@/components/ui/print-button';
 
 export const runtime = 'nodejs';
@@ -41,7 +42,7 @@ export default async function MemberDetailPage({
             <Badge variant="outline" className="text-sm font-mono">
               {member.memberNo}
             </Badge>
-            <Badge variant="secondary">Class {member.memberClass}</Badge>
+            <Badge variant="secondary">Class {member.memberClass.replace(/^Class\s*/i, '')}</Badge>
             <Badge
               variant={member.status === 'ACTIVE' ? 'success' : 'destructive'}
               className="text-xs"
@@ -106,6 +107,13 @@ export default async function MemberDetailPage({
                 </>
               )}
             </>
+          )}
+          {isAdmin && (
+            <RemoveMemberModal
+              memberId={member.id}
+              memberNo={member.memberNo}
+              fullName={member.fullName}
+            />
           )}
         </div>
       </div>
@@ -212,6 +220,12 @@ export default async function MemberDetailPage({
                 <span className="text-muted-foreground">Citizenship / ID Number</span>
                 <span className="font-medium font-mono">
                   {member.idNumber ? member.idNumber : '[Confidential / Hidden]'}
+                </span>
+              </div>
+              <div className="flex justify-between py-1 border-b">
+                <span className="text-muted-foreground">Phone Number</span>
+                <span className="font-medium font-mono">
+                  {member.phone}{member.altPhone ? ` / ${member.altPhone}` : ''}
                 </span>
               </div>
               <div className="flex justify-between py-1 border-b">

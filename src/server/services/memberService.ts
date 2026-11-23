@@ -24,54 +24,135 @@ export interface CreateMemberInput {
   monthlyAmount: Decimal | string | number;
   notes?: string | null;
   previousMemberId?: string | null;
+  advanceBalance?: Decimal | string | number | null;
+  memberClass?: string | null;
+}
+
+export interface ClassRuleItem {
+  id: string;
+  label: string;
+  joinedFrom: Date | null;
+  joinedTo: Date | null;
+}
+
+let cachedClassRules: ClassRuleItem[] | null = null;
+let classRulesExpiry = 0;
+
+export async function getClassRules(): Promise<ClassRuleItem[]> {
+  const now = Date.now();
+  if (cachedClassRules && now < classRulesExpiry) {
+    return cachedClassRules;
+  }
+  try {
+    cachedClassRules = await prisma.classRule.findMany();
+    classRulesExpiry = now + 10 * 60 * 1000; // 10 minutes in-memory cache
+  } catch (err) {
+    if (cachedClassRules) return cachedClassRules;
+    return [];
+  }
+  return cachedClassRules;
 }
 
 /**
- * Determine the class (A, B, C, etc.) from member join date using ClassRule table.
+ * Pure synchronous evaluation of member class using given rules list.
  */
-export async function determineMemberClass(joinDate: Date): Promise<string> {
-  const rules = await prisma.classRule.findMany();
-  for (const r of rules) {
-    const fromOk = !r.joinedFrom || joinDate >= r.joinedFrom;
-    const toOk = !r.joinedTo || joinDate <= r.joinedTo;
-    if (fromOk && toOk) {
-      return r.label;
+export function evaluateMemberClass(
+  joinDate: Date,
+  notes?: string | null,
+  rules?: ClassRuleItem[]
+): string {
+  if (notes) {
+    const match =
+      notes.match(/\[Class:\s*([A-D])\]/i) ||
+      notes.match(/^Class\s*([A-D])/i) ||
+      notes.match(/Class:\s*([A-D])/i);
+    if (match) {
+      return `Class ${match[1].toUpperCase()}`;
     }
   }
-  return 'General';
+  if (rules && rules.length > 0) {
+    for (const r of rules) {
+      const fromOk = !r.joinedFrom || joinDate >= r.joinedFrom;
+      const toOk = !r.joinedTo || joinDate <= r.joinedTo;
+      if (fromOk && toOk) {
+        return r.label.startsWith('Class ') ? r.label : `Class ${r.label}`;
+      }
+    }
+  }
+  return 'Class D';
 }
 
 /**
- * Generate next member number (GS-0001, GS-0002...).
+ * Determine the class (A, B, C, D) from notes tag [Class: X] or member join date using cached ClassRule table.
  */
-export async function generateNextMemberNo(): Promise<string> {
-  const last = await prisma.member.findFirst({
-    orderBy: { createdAt: 'desc' },
+export async function determineMemberClass(joinDate: Date, notes?: string | null): Promise<string> {
+  if (notes) {
+    const match =
+      notes.match(/\[Class:\s*([A-D])\]/i) ||
+      notes.match(/^Class\s*([A-D])/i) ||
+      notes.match(/Class:\s*([A-D])/i);
+    if (match) {
+      return `Class ${match[1].toUpperCase()}`;
+    }
+  }
+  const rules = await getClassRules();
+  return evaluateMemberClass(joinDate, notes, rules);
+}
+
+/**
+ * Generate next member number based on member class (e.g., A-0000, B-0000, C-0000, D-0000).
+ * 4 digits zero-padded starting from 0000 (A-0000, A-0001, etc.).
+ */
+export async function generateNextMemberNo(memberClassInput?: string | null): Promise<string> {
+  let prefix = 'D';
+  if (memberClassInput) {
+    const clean = memberClassInput.replace(/^Class\s*/i, '').trim().toUpperCase();
+    if (['A', 'B', 'C', 'D'].includes(clean)) {
+      prefix = clean;
+    }
+  }
+
+  // Find the highest sequence number for this class prefix
+  const members = await prisma.member.findMany({
+    where: {
+      memberNo: { startsWith: `${prefix}-` },
+    },
     select: { memberNo: true },
   });
 
-  if (!last || !last.memberNo.startsWith('GS-')) {
-    return 'GS-0001';
+  let maxNum = -1;
+  for (const m of members) {
+    const numPart = parseInt(m.memberNo.replace(`${prefix}-`, ''), 10);
+    if (!isNaN(numPart) && numPart > maxNum) {
+      maxNum = numPart;
+    }
   }
 
-  const numPart = parseInt(last.memberNo.replace('GS-', ''), 10);
-  if (isNaN(numPart)) {
-    return 'GS-0001';
-  }
-
-  const nextNum = numPart + 1;
-  return `GS-${String(nextNum).padStart(4, '0')}`;
+  const nextNum = maxNum + 1;
+  return `${prefix}-${String(nextNum).padStart(4, '0')}`;
 }
 
 /**
  * Create a new member.
  */
 export async function createMember(input: CreateMemberInput) {
-  const memberNo = await generateNextMemberNo();
+  // Determine class for member number generation
+  let targetClass = input.memberClass ? input.memberClass.replace(/^Class\s*/i, '').trim().toUpperCase() : null;
+  if (!targetClass) {
+    targetClass = (await determineMemberClass(input.joinDate, input.notes)).replace(/^Class\s*/i, '').trim().toUpperCase();
+  }
+
+  const memberNo = await generateNextMemberNo(targetClass);
   const bs = bsFromAd(input.joinDate);
 
   const idNumberEnc = input.idNumber ? encrypt(input.idNumber) : null;
   const nomineeIdEnc = input.nomineeId ? encrypt(input.nomineeId) : null;
+
+  let notes = input.notes || null;
+  if (targetClass) {
+    const classTag = `[Class: ${targetClass}]`;
+    notes = notes ? `${classTag}\n${notes}` : classTag;
+  }
 
   return prisma.member.create({
     data: {
@@ -94,7 +175,8 @@ export async function createMember(input: CreateMemberInput) {
       joinBsYear: bs.year,
       joinBsMonth: bs.month,
       monthlyAmount: new Decimal(input.monthlyAmount.toString()),
-      notes: input.notes,
+      advanceBalance: input.advanceBalance ? new Decimal(input.advanceBalance.toString()) : new Decimal(0),
+      notes,
       previousMemberId: input.previousMemberId,
       status: MemberStatus.ACTIVE,
     },
@@ -131,7 +213,7 @@ export async function getMemberProfile(memberId: string, userRole: Role) {
   if (!member) return null;
 
   // Class derivation
-  const memberClass = await determineMemberClass(member.joinDate);
+  const memberClass = await determineMemberClass(member.joinDate, member.notes);
 
   // Decrypt ID numbers only for ADMIN and TREASURER
   let idNumber: string | null = null;

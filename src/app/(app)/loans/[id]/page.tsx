@@ -7,6 +7,7 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { Role } from '@prisma/client';
 import { CapitaliseModal } from './capitalise-modal';
+import { ApproveLoanButton } from '../approve-button';
 
 export const runtime = 'nodejs';
 
@@ -67,6 +68,21 @@ export default async function LoanDetailPage({
         </div>
 
         <div className="flex items-center gap-2">
+          {loan.status === 'PENDING_APPROVAL' && isAdmin && (
+            <ApproveLoanButton
+              loan={{
+                id: loan.id,
+                loanNo: loan.loanNo,
+                amount: loan.amount.toString(),
+                rateAtStart: loan.rateAtStart.toString(),
+                purpose: loan.purpose,
+                borrower: {
+                  fullName: loan.borrower.fullName,
+                  memberNo: loan.borrower.memberNo,
+                },
+              }}
+            />
+          )}
           {loan.status === 'ACTIVE' && (
             <>
               <Link

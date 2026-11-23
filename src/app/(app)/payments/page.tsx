@@ -1,4 +1,5 @@
 import { prisma } from '@/server/db';
+import { syncAllFinancials } from '@/server/services/syncService';
 import { PaymentForm } from './payment-form';
 
 export const runtime = 'nodejs';
@@ -10,6 +11,9 @@ export default async function RecordPaymentPage({
 }) {
   const { memberId } = await searchParams;
 
+  // Auto-sync active members' 2083 dues, daily loan interest accruals, and missed fines
+  await syncAllFinancials();
+
   const members = await prisma.member.findMany({
     where: { status: 'ACTIVE' },
     select: {
@@ -20,15 +24,47 @@ export default async function RecordPaymentPage({
       advanceBalance: true,
       loans: {
         where: { status: 'ACTIVE' },
-        select: { id: true, loanNo: true, principalOutstanding: true },
+        select: {
+          id: true,
+          loanNo: true,
+          principalOutstanding: true,
+          periods: {
+            select: {
+              id: true,
+              bsYear: true,
+              bsMonth: true,
+              accrued: true,
+              paid: true,
+              capitalised: true,
+              finalised: true,
+            },
+            orderBy: [{ bsYear: 'asc' }, { bsMonth: 'asc' }],
+          },
+        },
       },
       dues: {
-        where: { status: { in: ['PENDING', 'PARTIAL'] } },
-        select: { id: true, bsYear: true, bsMonth: true, amount: true, paidAmount: true },
+        select: {
+          id: true,
+          bsYear: true,
+          bsMonth: true,
+          amount: true,
+          paidAmount: true,
+          status: true,
+        },
+        orderBy: [{ bsYear: 'asc' }, { bsMonth: 'asc' }],
       },
       fines: {
         where: { status: { in: ['PENDING', 'PARTIAL'] } },
-        select: { id: true, type: true, amount: true, paidAmount: true, waivedAmount: true, postedOn: true },
+        select: {
+          id: true,
+          type: true,
+          amount: true,
+          paidAmount: true,
+          waivedAmount: true,
+          postedOn: true,
+          status: true,
+        },
+        orderBy: { postedOn: 'asc' },
       },
     },
     orderBy: { memberNo: 'asc' },
@@ -39,7 +75,7 @@ export default async function RecordPaymentPage({
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Record Payment</h1>
         <p className="text-sm text-muted-foreground">
-          Post contribution savings or loan repayments with live double-entry preview
+          Post payments with real-time member records, priority deduction, and automatic allocation preview
         </p>
       </div>
 
@@ -54,6 +90,15 @@ export default async function RecordPaymentPage({
             id: l.id,
             loanNo: l.loanNo,
             principalOutstanding: l.principalOutstanding.toString(),
+            periods: l.periods.map((p) => ({
+              id: p.id,
+              bsYear: p.bsYear,
+              bsMonth: p.bsMonth,
+              accrued: p.accrued.toString(),
+              paid: p.paid.toString(),
+              capitalised: p.capitalised.toString(),
+              finalised: p.finalised,
+            })),
           })),
           dues: m.dues.map((d) => ({
             id: d.id,
@@ -61,6 +106,7 @@ export default async function RecordPaymentPage({
             bsMonth: d.bsMonth,
             amount: d.amount.toString(),
             paidAmount: d.paidAmount.toString(),
+            status: d.status,
           })),
           fines: m.fines.map((f) => ({
             id: f.id,
@@ -69,6 +115,7 @@ export default async function RecordPaymentPage({
             paidAmount: f.paidAmount.toString(),
             waivedAmount: f.waivedAmount.toString(),
             postedOn: f.postedOn.toISOString(),
+            status: f.status,
           })),
         }))}
         defaultMemberId={memberId}

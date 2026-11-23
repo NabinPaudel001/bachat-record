@@ -82,7 +82,15 @@ export default async function LoansPage() {
                     <td className="p-3 text-xs text-muted-foreground">{l.purpose || '—'}</td>
                     <td className="p-3 text-right">
                       {isAdmin ? (
-                        <ApproveLoanButton loanId={l.id} />
+                        <ApproveLoanButton
+                          loan={{
+                            id: l.id,
+                            loanNo: l.loanNo,
+                            amount: l.amount.toString(),
+                            purpose: l.purpose,
+                            borrower: l.borrower,
+                          }}
+                        />
                       ) : (
                         <span className="text-xs text-muted-foreground italic">Admin approval needed</span>
                       )}

@@ -1,6 +1,6 @@
 'use server';
 
-import { proposeLoan, approveAndDisburseLoan } from '@/server/services/loanService';
+import { proposeLoan, approveAndDisburseLoan, updatePendingLoan } from '@/server/services/loanService';
 import { requireRole } from '@/server/auth/rbac';
 import { auditLog } from '@/server/audit';
 import { revalidatePath } from 'next/cache';
@@ -39,25 +39,87 @@ export async function proposeLoanAction(params: {
   }
 }
 
-export async function approveLoanAction(loanId: string) {
+export async function updateLoanAction(params: {
+  loanId: string;
+  amount?: number;
+  rateAtStart?: number;
+  purpose?: string;
+}) {
   const admin = await requireRole(Role.ADMIN);
 
-  const loan = await approveAndDisburseLoan({
-    loanId,
-    disbursementDate: new Date(),
-    adminUser: admin,
-  });
+  try {
+    const updated = await updatePendingLoan({
+      loanId: params.loanId,
+      amount: params.amount,
+      rateAtStart: params.rateAtStart,
+      purpose: params.purpose,
+      adminUser: admin,
+    });
 
-  await auditLog({
-    userId: admin.id,
-    action: 'APPROVE_DISBURSE_LOAN',
-    entity: 'Loan',
-    entityId: loan.id,
-    after: { status: loan.status, disbursedOn: loan.disbursedOn },
-  });
+    await auditLog({
+      userId: admin.id,
+      action: 'UPDATE_LOAN',
+      entity: 'Loan',
+      entityId: updated.id,
+      after: { amount: updated.amount, rate: updated.rateAtStart, purpose: updated.purpose },
+    });
 
-  revalidatePath('/loans');
-  revalidatePath('/ledger');
-  revalidatePath('/dashboard');
-  return { success: true };
+    revalidatePath('/loans');
+    revalidatePath(`/loans/${params.loanId}`);
+    return { success: true };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { error: msg };
+  }
+}
+
+export async function approveLoanAction(
+  loanIdOrParams:
+    | string
+    | {
+        loanId: string;
+        amount?: number;
+        rateAtStart?: number;
+        purpose?: string;
+        disbursementDate?: string;
+      }
+) {
+  const admin = await requireRole(Role.ADMIN);
+
+  try {
+    const loanId = typeof loanIdOrParams === 'string' ? loanIdOrParams : loanIdOrParams.loanId;
+    const amount = typeof loanIdOrParams === 'object' ? loanIdOrParams.amount : undefined;
+    const rateAtStart = typeof loanIdOrParams === 'object' ? loanIdOrParams.rateAtStart : undefined;
+    const purpose = typeof loanIdOrParams === 'object' ? loanIdOrParams.purpose : undefined;
+    const disbursementDate =
+      typeof loanIdOrParams === 'object' && loanIdOrParams.disbursementDate
+        ? new Date(loanIdOrParams.disbursementDate)
+        : new Date();
+
+    const loan = await approveAndDisburseLoan({
+      loanId,
+      disbursementDate,
+      amount,
+      rateAtStart,
+      purpose,
+      adminUser: admin,
+    });
+
+    await auditLog({
+      userId: admin.id,
+      action: 'APPROVE_DISBURSE_LOAN',
+      entity: 'Loan',
+      entityId: loan.id,
+      after: { status: loan.status, disbursedOn: loan.disbursedOn, amount: loan.amount },
+    });
+
+    revalidatePath('/loans');
+    revalidatePath(`/loans/${loan.id}`);
+    revalidatePath('/ledger');
+    revalidatePath('/dashboard');
+    return { success: true };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { error: msg };
+  }
 }

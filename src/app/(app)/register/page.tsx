@@ -1,5 +1,6 @@
 import { prisma } from '@/server/db';
 import { todayBS } from '@/server/engines/bs';
+import { syncAllFinancials } from '@/server/services/syncService';
 import { formatNPR, BS_MONTHS } from '@/lib/format';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import Link from 'next/link';
@@ -14,6 +15,9 @@ export default async function ContributionRegisterPage({
   const { year } = await searchParams;
   const currentBS = todayBS();
   const targetYear = year ? parseInt(year, 10) : currentBS.year;
+
+  // Auto-sync active members' contribution dues and fines for target year (e.g. 2083) with debounce
+  await syncAllFinancials(targetYear);
 
   const members = await prisma.member.findMany({
     where: { status: 'ACTIVE' },

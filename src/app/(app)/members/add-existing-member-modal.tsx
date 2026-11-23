@@ -4,29 +4,16 @@ import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader, CardTitle, CardContent, CardFooter } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { UserPlus, X, Plus, Trash2, ArrowRight, ArrowLeft, CheckCircle } from 'lucide-react';
+import { UserPlus, X, Wallet, ShieldCheck, DollarSign, Calendar, Info, Layers } from 'lucide-react';
 import { NepaliDatePicker } from '@/components/ui/nepali-date-picker';
 import { addExistingMemberAction } from './actions';
 
-interface ContributionRow {
-  bsYear: number; bsMonth: number; amount: number; paidAmount: number; status: 'PAID' | 'PENDING' | 'PARTIAL';
-}
-interface LoanRow {
-  loanNo: string; amount: number; disbursedOn: string; purpose: string; status: 'ACTIVE' | 'CLOSED'; principalOutstanding: number; g1: string; g2: string; g3: string;
-}
-interface FineRow {
-  type: 'CONTRIBUTION' | 'LOAN_INTEREST'; amount: number; paidAmount: number; status: 'PENDING' | 'PARTIAL' | 'PAID' | 'WAIVED'; postedOn: string;
-}
-
-const BS_MONTHS = ['Baisakh','Jestha','Ashadh','Shrawan','Bhadra','Ashoj','Kartik','Mangsir','Poush','Magh','Falgun','Chaitra'];
-
 export function AddExistingMemberModal() {
   const [open, setOpen] = useState(false);
-  const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Step 1: Basic Info
+  // Basic Information
   const [fullName, setFullName] = useState('');
   const [phone, setPhone] = useState('');
   const [altPhone, setAltPhone] = useState('');
@@ -39,94 +26,91 @@ export function AddExistingMemberModal() {
   const [monthlyAmount, setMonthlyAmount] = useState('1000');
   const [bankDetails, setBankDetails] = useState('');
   const [notes, setNotes] = useState('');
+
+  // Nominee Details
   const [nomineeName, setNomineeName] = useState('');
   const [nomineeRelation, setNomineeRelation] = useState('');
   const [nomineePhone, setNomineePhone] = useState('');
   const [nomineeId, setNomineeId] = useState('');
 
-  // Step 2: Contributions
-  const [contributions, setContributions] = useState<ContributionRow[]>([
-    { bsYear: 2081, bsMonth: 1, amount: 1000, paidAmount: 1000, status: 'PAID' },
-  ]);
+  // Class Selection: A, B, or C
+  const [memberClass, setMemberClass] = useState<'A' | 'B' | 'C'>('A');
 
-  // Step 3: Loans
-  const [loans, setLoans] = useState<LoanRow[]>([]);
+  // 7 Existing Financial Records:
+  const [monthlyLevyAccumulated, setMonthlyLevyAccumulated] = useState('0');
+  const [monthlyLevyDue, setMonthlyLevyDue] = useState('0');
+  const [monthlyLevyFine, setMonthlyLevyFine] = useState('0');
+  const [loanAmountRemaining, setLoanAmountRemaining] = useState('0');
+  const [loanInterestRemaining, setLoanInterestRemaining] = useState('0');
+  const [loanInterestFine, setLoanInterestFine] = useState('0');
+  const [advanceBalance, setAdvanceBalance] = useState('0');
 
-  // Step 4: Fines
-  const [fines, setFines] = useState<FineRow[]>([]);
-
-  function addContribution() {
-    const last = contributions[contributions.length - 1];
-    let ny = last ? last.bsYear : 2081;
-    let nm = last ? last.bsMonth + 1 : 1;
-    if (nm > 12) { nm = 1; ny++; }
-    setContributions([...contributions, { bsYear: ny, bsMonth: nm, amount: Number(monthlyAmount) || 1000, paidAmount: Number(monthlyAmount) || 1000, status: 'PAID' }]);
+  function resetForm() {
+    setFullName('');
+    setPhone('');
+    setAltPhone('');
+    setEmail('');
+    setPermanentAddress('');
+    setCurrentAddress('');
+    setIdNumber('');
+    setJoinDate('');
+    setDob('');
+    setMonthlyAmount('1000');
+    setBankDetails('');
+    setNotes('');
+    setNomineeName('');
+    setNomineeRelation('');
+    setNomineePhone('');
+    setNomineeId('');
+    setMemberClass('A');
+    setMonthlyLevyAccumulated('0');
+    setMonthlyLevyDue('0');
+    setMonthlyLevyFine('0');
+    setLoanAmountRemaining('0');
+    setLoanInterestRemaining('0');
+    setLoanInterestFine('0');
+    setAdvanceBalance('0');
+    setError(null);
   }
 
-  function removeContribution(i: number) {
-    setContributions(contributions.filter((_, idx) => idx !== i));
-  }
-
-  function updateContribution(i: number, field: keyof ContributionRow, value: string | number) {
-    const updated = [...contributions];
-    (updated[i] as unknown as Record<string, unknown>)[field] = value;
-    setContributions(updated);
-  }
-
-  function addLoan() {
-    setLoans([...loans, { loanNo: '', amount: 50000, disbursedOn: '', purpose: '', status: 'ACTIVE', principalOutstanding: 50000, g1: '', g2: '', g3: '' }]);
-  }
-
-  function removeLoan(i: number) { setLoans(loans.filter((_, idx) => idx !== i)); }
-
-  function updateLoan(i: number, field: keyof LoanRow, value: string | number) {
-    const updated = [...loans];
-    (updated[i] as unknown as Record<string, unknown>)[field] = value;
-    setLoans(updated);
-  }
-
-  function addFine() {
-    setFines([...fines, { type: 'CONTRIBUTION', amount: 500, paidAmount: 0, status: 'PENDING', postedOn: new Date().toISOString().split('T')[0] }]);
-  }
-
-  function removeFine(i: number) { setFines(fines.filter((_, idx) => idx !== i)); }
-
-  function updateFine(i: number, field: keyof FineRow, value: string | number) {
-    const updated = [...fines];
-    (updated[i] as unknown as Record<string, unknown>)[field] = value;
-    setFines(updated);
-  }
-
-  async function handleSubmit() {
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
     if (!fullName || !phone || !permanentAddress || !joinDate || !monthlyAmount) {
-      setError('Please fill all required fields in Step 1.');
-      setStep(1);
+      setError('Please fill in all required fields marked with *');
       return;
     }
+
     setLoading(true);
     setError(null);
+
     try {
       const res = await addExistingMemberAction({
-        fullName, phone, altPhone: altPhone || undefined, email: email || undefined,
-        permanentAddress, currentAddress: currentAddress || undefined,
-        idNumber: idNumber || undefined, dob: dob || undefined,
-        joinDate, monthlyAmount,
-        bankDetails: bankDetails || undefined, notes: notes || undefined,
-        nomineeName: nomineeName || undefined, nomineeRelation: nomineeRelation || undefined,
-        nomineePhone: nomineePhone || undefined, nomineeId: nomineeId || undefined,
-        contributions: contributions.map((c) => ({
-          bsYear: c.bsYear, bsMonth: c.bsMonth, amount: c.amount, paidAmount: c.paidAmount, status: c.status,
-        })),
-        loans: loans.map((l) => ({
-          loanNo: l.loanNo || undefined, amount: l.amount,
-          disbursedOn: l.disbursedOn || undefined, purpose: l.purpose || undefined,
-          status: l.status, principalOutstanding: l.status === 'ACTIVE' ? l.principalOutstanding : undefined,
-          guarantorCodes: [l.g1, l.g2, l.g3].filter(Boolean),
-        })),
-        fines: fines.map((f) => ({
-          type: f.type, amount: f.amount, paidAmount: f.paidAmount, status: f.status, postedOn: f.postedOn,
-        })),
+        fullName,
+        phone,
+        altPhone: altPhone || undefined,
+        email: email || undefined,
+        permanentAddress,
+        currentAddress: currentAddress || undefined,
+        idNumber: idNumber || undefined,
+        dob: dob || undefined,
+        joinDate,
+        monthlyAmount,
+        bankDetails: bankDetails || undefined,
+        notes: notes || undefined,
+        nomineeName: nomineeName || undefined,
+        nomineeRelation: nomineeRelation || undefined,
+        nomineePhone: nomineePhone || undefined,
+        nomineeId: nomineeId || undefined,
+        memberClass,
+        monthlyLevyAccumulated: parseFloat(monthlyLevyAccumulated) || 0,
+        monthlyLevyDue: parseFloat(monthlyLevyDue) || 0,
+        monthlyLevyFine: parseFloat(monthlyLevyFine) || 0,
+        loanAmountRemaining: parseFloat(loanAmountRemaining) || 0,
+        loanInterestRemaining: parseFloat(loanInterestRemaining) || 0,
+        loanInterestFine: parseFloat(loanInterestFine) || 0,
+        advanceBalance: parseFloat(advanceBalance) || 0,
       });
+
       if (res?.error) {
         setError(res.error);
       } else {
@@ -141,258 +125,393 @@ export function AddExistingMemberModal() {
     }
   }
 
-  function resetForm() {
-    setStep(1); setFullName(''); setPhone(''); setAltPhone(''); setEmail('');
-    setPermanentAddress(''); setCurrentAddress(''); setIdNumber('');
-    setJoinDate(''); setDob(''); setMonthlyAmount('1000'); setBankDetails(''); setNotes('');
-    setNomineeName(''); setNomineeRelation(''); setNomineePhone(''); setNomineeId('');
-    setContributions([{ bsYear: 2081, bsMonth: 1, amount: 1000, paidAmount: 1000, status: 'PAID' }]);
-    setLoans([]); setFines([]); setError(null);
-  }
-
-  const inputCls = 'h-9 w-full rounded-md border border-input bg-background px-3 text-sm';
-  const selectCls = 'h-9 w-full rounded-md border border-input bg-background px-2 text-sm';
-
   return (
     <>
-      <Button variant="outline" onClick={() => setOpen(true)} className="flex items-center gap-1.5 shadow-sm">
-        <UserPlus className="h-4 w-4" /> Add Existing Member
+      <Button
+        variant="outline"
+        onClick={() => setOpen(true)}
+        className="flex items-center gap-1.5 shadow-sm border-dashed"
+      >
+        <UserPlus className="h-4 w-4 text-primary" /> Add Existing Member
       </Button>
 
       {open && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 overflow-y-auto">
-          <Card className="w-full max-w-3xl max-h-[92vh] flex flex-col overflow-hidden bg-card shadow-2xl">
-            <CardHeader className="flex flex-row items-center justify-between border-b p-4">
+          <Card className="w-full max-w-2xl max-h-[92vh] flex flex-col overflow-hidden bg-card shadow-2xl">
+            {/* Header */}
+            <CardHeader className="flex flex-row items-center justify-between border-b p-4 bg-muted/20">
               <div>
-                <CardTitle className="text-lg">Add Existing Member</CardTitle>
-                <p className="text-xs text-muted-foreground mt-1">
-                  Step {step} of 5 — {['Basic Info','Contributions','Loans','Fines','Review & Confirm'][step - 1]}
+                <CardTitle className="text-lg flex items-center gap-2">
+                  <UserPlus className="h-5 w-5 text-primary" />
+                  Add Existing Member
+                </CardTitle>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Record member details along with all opening financial balances and class.
                 </p>
               </div>
-              <button onClick={() => { setOpen(false); resetForm(); }} className="p-1 rounded-md hover:bg-muted text-muted-foreground">
+              <button
+                type="button"
+                onClick={() => setOpen(false)}
+                className="p-1.5 rounded-md hover:bg-muted text-muted-foreground transition-colors"
+              >
                 <X className="h-5 w-5" />
               </button>
             </CardHeader>
 
-            <div className="flex border-b px-4 py-2 gap-1">
-              {[1,2,3,4,5].map((s) => (
-                <div key={s} className={`h-1.5 flex-1 rounded-full ${s <= step ? 'bg-primary' : 'bg-muted'}`} />
-              ))}
-            </div>
+            {/* Form */}
+            <form onSubmit={handleSubmit} className="overflow-y-auto flex-1 p-5 space-y-6">
+              {error && (
+                <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive font-medium border border-destructive/20">
+                  {error}
+                </div>
+              )}
 
-            <div className="overflow-y-auto flex-1 p-4 space-y-4">
-              {error && <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{error}</div>}
+              {/* SECTION 1: Member Class Selection */}
+              <div className="rounded-lg border bg-muted/10 p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                    <Layers className="h-3.5 w-3.5 text-primary" />
+                    Member Class *
+                  </label>
+                  <span className="text-[11px] text-muted-foreground">Select historical classification</span>
+                </div>
+                <div className="grid grid-cols-3 gap-3">
+                  {(['A', 'B', 'C'] as const).map((cls) => (
+                    <button
+                      key={cls}
+                      type="button"
+                      onClick={() => setMemberClass(cls)}
+                      className={`p-3 rounded-lg border text-center transition-all flex flex-col items-center justify-center gap-1 ${
+                        memberClass === cls
+                          ? 'border-primary bg-primary/10 text-primary font-bold shadow-sm ring-1 ring-primary'
+                          : 'border-input hover:bg-muted/50 text-foreground'
+                      }`}
+                    >
+                      <span className="text-base font-bold">Class {cls}</span>
+                      <span className="text-[10px] text-muted-foreground font-normal">
+                        {cls === 'A' ? 'Founding / Tier 1' : cls === 'B' ? 'Established / Tier 2' : 'Standard / Tier 3'}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
 
-              {step === 1 && (
-                <div className="space-y-4">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div className="space-y-1">
-                      <label className="text-xs font-semibold">Full Name *</label>
-                      <input value={fullName} onChange={(e) => setFullName(e.target.value)} required placeholder="e.g. Ram Bahadur Tamang" className={inputCls} />
+              {/* SECTION 2: 7 Existing Financial Records */}
+              <div className="rounded-lg border border-primary/20 bg-primary/[0.02] p-4 space-y-4">
+                <div className="flex items-center justify-between border-b pb-2">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-primary flex items-center gap-1.5">
+                    <DollarSign className="h-4 w-4" />
+                    Existing Financial Records to Record
+                  </h3>
+                  <Badge variant="outline" className="text-[10px]">Opening Balances</Badge>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {/* 1. Monthly Levy Accumulated */}
+                  <div className="space-y-1">
+                    <label className="text-xs font-semibold flex items-center gap-1">
+                      Monthly Levy Accumulated (NPR)
+                    </label>
+                    <div className="relative">
+                      <span className="absolute left-2.5 top-2 text-xs text-muted-foreground font-mono">Rs.</span>
+                      <input
+                        type="number"
+                        step="any"
+                        min="0"
+                        value={monthlyLevyAccumulated}
+                        onChange={(e) => setMonthlyLevyAccumulated(e.target.value)}
+                        placeholder="0.00"
+                        className="h-9 w-full rounded-md border border-input bg-background pl-9 pr-3 text-sm font-mono"
+                      />
                     </div>
-                    <div className="space-y-1">
-                      <label className="text-xs font-semibold">Phone *</label>
-                      <input value={phone} onChange={(e) => setPhone(e.target.value)} required placeholder="9841234567" className={inputCls} />
-                    </div>
-                    <div className="space-y-1">
-                      <label className="text-xs font-semibold">Alt Phone</label>
-                      <input value={altPhone} onChange={(e) => setAltPhone(e.target.value)} placeholder="Optional" className={inputCls} />
-                    </div>
-                    <div className="space-y-1">
-                      <label className="text-xs font-semibold">Email</label>
-                      <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Optional" className={inputCls} />
-                    </div>
-                    <div className="space-y-1">
-                      <label className="text-xs font-semibold">Permanent Address *</label>
-                      <input value={permanentAddress} onChange={(e) => setPermanentAddress(e.target.value)} required placeholder="Pokhara, Ward 4" className={inputCls} />
-                    </div>
-                    <div className="space-y-1">
-                      <label className="text-xs font-semibold">Current Address</label>
-                      <input value={currentAddress} onChange={(e) => setCurrentAddress(e.target.value)} placeholder="Kathmandu" className={inputCls} />
-                    </div>
+                    <span className="text-[10px] text-muted-foreground block">Total savings deposited to date</span>
                   </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 border-t pt-4">
-                    <div className="space-y-1">
-                      <label className="text-xs font-semibold">Citizenship / ID No</label>
-                      <input value={idNumber} onChange={(e) => setIdNumber(e.target.value)} placeholder="Encrypted at rest" className={inputCls} />
+
+                  {/* 2. Monthly Levy Due */}
+                  <div className="space-y-1">
+                    <label className="text-xs font-semibold text-rose-600 dark:text-rose-400">
+                      Monthly Levy Due (NPR)
+                    </label>
+                    <div className="relative">
+                      <span className="absolute left-2.5 top-2 text-xs text-rose-500 font-mono">Rs.</span>
+                      <input
+                        type="number"
+                        step="any"
+                        min="0"
+                        value={monthlyLevyDue}
+                        onChange={(e) => setMonthlyLevyDue(e.target.value)}
+                        placeholder="0.00"
+                        className="h-9 w-full rounded-md border border-rose-200 dark:border-rose-900 bg-background pl-9 pr-3 text-sm font-mono text-rose-600 dark:text-rose-400"
+                      />
                     </div>
-                    <NepaliDatePicker name="joinDatePicker" label="Join Date (BS)" required onChange={(ad) => setJoinDate(ad)} />
-                    <div className="space-y-1">
-                      <label className="text-xs font-semibold">Monthly Amount (NPR) *</label>
-                      <input type="number" step="any" value={monthlyAmount} onChange={(e) => setMonthlyAmount(e.target.value)} required className={inputCls} />
-                    </div>
+                    <span className="text-[10px] text-muted-foreground block">Missed/unpaid monthly installments</span>
                   </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 border-t pt-4">
-                    <NepaliDatePicker name="dobPicker" label="Date of Birth (BS)" onChange={(ad) => setDob(ad)} />
-                    <div className="space-y-1">
-                      <label className="text-xs font-semibold">Bank Details</label>
-                      <input value={bankDetails} onChange={(e) => setBankDetails(e.target.value)} placeholder="Bank name, A/C No." className={inputCls} />
+
+                  {/* 3. Monthly Levy Fine */}
+                  <div className="space-y-1">
+                    <label className="text-xs font-semibold text-rose-600 dark:text-rose-400">
+                      Monthly Levy Fine (NPR)
+                    </label>
+                    <div className="relative">
+                      <span className="absolute left-2.5 top-2 text-xs text-rose-500 font-mono">Rs.</span>
+                      <input
+                        type="number"
+                        step="any"
+                        min="0"
+                        value={monthlyLevyFine}
+                        onChange={(e) => setMonthlyLevyFine(e.target.value)}
+                        placeholder="0.00"
+                        className="h-9 w-full rounded-md border border-input bg-background pl-9 pr-3 text-sm font-mono text-rose-600 dark:text-rose-400"
+                      />
                     </div>
+                    <span className="text-[10px] text-muted-foreground block">Fines on missed monthly contributions</span>
+                  </div>
+
+                  {/* 4. Loan Amount Remaining */}
+                  <div className="space-y-1">
+                    <label className="text-xs font-semibold text-amber-600 dark:text-amber-400">
+                      Loan Amount Remaining (NPR)
+                    </label>
+                    <div className="relative">
+                      <span className="absolute left-2.5 top-2 text-xs text-amber-500 font-mono">Rs.</span>
+                      <input
+                        type="number"
+                        step="any"
+                        min="0"
+                        value={loanAmountRemaining}
+                        onChange={(e) => setLoanAmountRemaining(e.target.value)}
+                        placeholder="0.00"
+                        className="h-9 w-full rounded-md border border-input bg-background pl-9 pr-3 text-sm font-mono text-amber-600 dark:text-amber-400"
+                      />
+                    </div>
+                    <span className="text-[10px] text-muted-foreground block">Current outstanding loan principal</span>
+                  </div>
+
+                  {/* 5. Loan Interest Remaining */}
+                  <div className="space-y-1">
+                    <label className="text-xs font-semibold text-amber-600 dark:text-amber-400">
+                      Loan Interest Remaining (NPR)
+                    </label>
+                    <div className="relative">
+                      <span className="absolute left-2.5 top-2 text-xs text-amber-500 font-mono">Rs.</span>
+                      <input
+                        type="number"
+                        step="any"
+                        min="0"
+                        value={loanInterestRemaining}
+                        onChange={(e) => setLoanInterestRemaining(e.target.value)}
+                        placeholder="0.00"
+                        className="h-9 w-full rounded-md border border-input bg-background pl-9 pr-3 text-sm font-mono text-amber-600 dark:text-amber-400"
+                      />
+                    </div>
+                    <span className="text-[10px] text-muted-foreground block">Accrued unpaid loan interest</span>
+                  </div>
+
+                  {/* 6. Loan Interest Fine */}
+                  <div className="space-y-1">
+                    <label className="text-xs font-semibold text-rose-600 dark:text-rose-400">
+                      Loan Interest Fine (NPR)
+                    </label>
+                    <div className="relative">
+                      <span className="absolute left-2.5 top-2 text-xs text-rose-500 font-mono">Rs.</span>
+                      <input
+                        type="number"
+                        step="any"
+                        min="0"
+                        value={loanInterestFine}
+                        onChange={(e) => setLoanInterestFine(e.target.value)}
+                        placeholder="0.00"
+                        className="h-9 w-full rounded-md border border-input bg-background pl-9 pr-3 text-sm font-mono text-rose-600 dark:text-rose-400"
+                      />
+                    </div>
+                    <span className="text-[10px] text-muted-foreground block">Fines on overdue loan interest</span>
+                  </div>
+
+                  {/* 7. Advance Balance */}
+                  <div className="space-y-1 sm:col-span-2">
+                    <label className="text-xs font-semibold text-emerald-600 dark:text-emerald-400 flex items-center gap-1.5">
+                      <Wallet className="h-3.5 w-3.5" />
+                      Advance Balance (NPR)
+                    </label>
+                    <div className="relative">
+                      <span className="absolute left-2.5 top-2 text-xs text-emerald-500 font-mono">Rs.</span>
+                      <input
+                        type="number"
+                        step="any"
+                        min="0"
+                        value={advanceBalance}
+                        onChange={(e) => setAdvanceBalance(e.target.value)}
+                        placeholder="0.00"
+                        className="h-9 w-full rounded-md border border-emerald-200 dark:border-emerald-900 bg-background pl-9 pr-3 text-sm font-mono text-emerald-600 dark:text-emerald-400"
+                      />
+                    </div>
+                    <span className="text-[10px] text-muted-foreground block">
+                      Surplus advance balance held by the member (offsets fines → interest → principal → dues)
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* SECTION 3: Personal & Contact Information */}
+              <div className="space-y-4">
+                <h3 className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5 border-b pb-1">
+                  <ShieldCheck className="h-3.5 w-3.5 text-primary" />
+                  Personal & Contact Information
+                </h3>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="space-y-1">
+                    <label className="text-xs font-semibold">Full Name *</label>
+                    <input
+                      required
+                      value={fullName}
+                      onChange={(e) => setFullName(e.target.value)}
+                      placeholder="e.g. Ram Bahadur Thapa"
+                      className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+                    />
                   </div>
                   <div className="space-y-1">
-                    <label className="text-xs font-semibold">Notes</label>
-                    <textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Any special notes..." className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm min-h-[60px]" />
+                    <label className="text-xs font-semibold">Phone Number *</label>
+                    <input
+                      required
+                      value={phone}
+                      onChange={(e) => setPhone(e.target.value)}
+                      placeholder="e.g. 9851000000"
+                      className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+                    />
                   </div>
-                  <div className="border-t pt-4 space-y-2">
-                    <h4 className="text-xs font-bold uppercase text-muted-foreground">Nominee Information</h4>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      <input value={nomineeName} onChange={(e) => setNomineeName(e.target.value)} placeholder="Nominee Name" className={inputCls} />
-                      <input value={nomineeRelation} onChange={(e) => setNomineeRelation(e.target.value)} placeholder="Relation (e.g. Spouse)" className={inputCls} />
-                      <input value={nomineePhone} onChange={(e) => setNomineePhone(e.target.value)} placeholder="Nominee Phone" className={inputCls} />
-                      <input value={nomineeId} onChange={(e) => setNomineeId(e.target.value)} placeholder="Nominee ID Number" className={inputCls} />
-                    </div>
+                  <div className="space-y-1">
+                    <label className="text-xs font-semibold">Alternate Phone</label>
+                    <input
+                      value={altPhone}
+                      onChange={(e) => setAltPhone(e.target.value)}
+                      placeholder="Optional"
+                      className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs font-semibold">Email Address</label>
+                    <input
+                      type="email"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      placeholder="Optional"
+                      className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs font-semibold">Permanent Address *</label>
+                    <input
+                      required
+                      value={permanentAddress}
+                      onChange={(e) => setPermanentAddress(e.target.value)}
+                      placeholder="e.g. Pokhara Ward 5, Kaski"
+                      className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs font-semibold">Current Address</label>
+                    <input
+                      value={currentAddress}
+                      onChange={(e) => setCurrentAddress(e.target.value)}
+                      placeholder="e.g. Kathmandu"
+                      className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+                    />
                   </div>
                 </div>
-              )}
 
-              {step === 2 && (
-                <div className="space-y-4">
-                  <p className="text-xs text-muted-foreground">Enter all past contribution months since the member joined.</p>
-                  {contributions.map((c, i) => (
-                    <div key={i} className="flex items-end gap-2 p-3 bg-muted/20 rounded-md border">
-                      <div className="space-y-1 w-20">
-                        <label className="text-[10px] font-semibold">BS Year</label>
-                        <input type="number" value={c.bsYear} onChange={(e) => updateContribution(i, 'bsYear', Number(e.target.value))} className={inputCls} />
-                      </div>
-                      <div className="space-y-1 w-28">
-                        <label className="text-[10px] font-semibold">Month</label>
-                        <select value={c.bsMonth} onChange={(e) => updateContribution(i, 'bsMonth', Number(e.target.value))} className={selectCls}>
-                          {BS_MONTHS.map((m, idx) => <option key={idx} value={idx + 1}>{m}</option>)}
-                        </select>
-                      </div>
-                      <div className="space-y-1 flex-1">
-                        <label className="text-[10px] font-semibold">Amount</label>
-                        <input type="number" step="any" value={c.amount} onChange={(e) => updateContribution(i, 'amount', Number(e.target.value))} className={inputCls} />
-                      </div>
-                      <div className="space-y-1 flex-1">
-                        <label className="text-[10px] font-semibold">Paid</label>
-                        <input type="number" step="any" value={c.paidAmount} onChange={(e) => updateContribution(i, 'paidAmount', Number(e.target.value))} className={inputCls} />
-                      </div>
-                      <div className="space-y-1 w-24">
-                        <label className="text-[10px] font-semibold">Status</label>
-                        <select value={c.status} onChange={(e) => updateContribution(i, 'status', e.target.value)} className={selectCls}>
-                          <option value="PAID">Paid</option>
-                          <option value="PENDING">Pending</option>
-                          <option value="PARTIAL">Partial</option>
-                        </select>
-                      </div>
-                      <button type="button" onClick={() => removeContribution(i)} className="p-1.5 text-destructive hover:bg-destructive/10 rounded">
-                        <Trash2 className="h-4 w-4" />
-                      </button>
-                    </div>
-                  ))}
-                  <Button type="button" variant="outline" size="sm" onClick={addContribution} className="flex items-center gap-1">
-                    <Plus className="h-3.5 w-3.5" /> Add Month
-                  </Button>
-                </div>
-              )}
-
-              {step === 3 && (
-                <div className="space-y-4">
-                  <p className="text-xs text-muted-foreground">Enter any existing loans (optional).</p>
-                  {loans.length === 0 && (
-                    <div className="text-center py-8 text-muted-foreground text-sm border rounded-md bg-muted/10">No loans to import.</div>
-                  )}
-                  {loans.map((l, i) => (
-                    <div key={i} className="p-3 bg-muted/20 rounded-md border space-y-3">
-                      <div className="flex items-center justify-between">
-                        <Badge variant="outline">Loan {i + 1}</Badge>
-                        <button type="button" onClick={() => removeLoan(i)} className="p-1 text-destructive hover:bg-destructive/10 rounded">
-                          <Trash2 className="h-4 w-4" />
-                        </button>
-                      </div>
-                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                        <div className="space-y-1"><label className="text-[10px] font-semibold">Loan No</label><input value={l.loanNo} onChange={(e) => updateLoan(i, 'loanNo', e.target.value)} placeholder="HIST-001" className={inputCls} /></div>
-                        <div className="space-y-1"><label className="text-[10px] font-semibold">Amount *</label><input type="number" step="any" value={l.amount} onChange={(e) => updateLoan(i, 'amount', Number(e.target.value))} className={inputCls} /></div>
-                        <div className="space-y-1"><label className="text-[10px] font-semibold">Status</label><select value={l.status} onChange={(e) => updateLoan(i, 'status', e.target.value)} className={selectCls}><option value="ACTIVE">Active</option><option value="CLOSED">Closed</option></select></div>
-                        {l.status === 'ACTIVE' && <div className="space-y-1"><label className="text-[10px] font-semibold">Outstanding</label><input type="number" step="any" value={l.principalOutstanding} onChange={(e) => updateLoan(i, 'principalOutstanding', Number(e.target.value))} className={inputCls} /></div>}
-                      </div>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                        <div className="space-y-1"><label className="text-[10px] font-semibold">Purpose</label><input value={l.purpose} onChange={(e) => updateLoan(i, 'purpose', e.target.value)} className={inputCls} /></div>
-                        <div className="space-y-1"><label className="text-[10px] font-semibold">Disbursed Date (AD)</label><input type="date" value={l.disbursedOn} onChange={(e) => updateLoan(i, 'disbursedOn', e.target.value)} className={inputCls} /></div>
-                      </div>
-                      {l.status === 'ACTIVE' && (
-                        <div className="space-y-1">
-                          <label className="text-[10px] font-semibold text-muted-foreground">Guarantor Member Codes</label>
-                          <div className="grid grid-cols-3 gap-2">
-                            <input value={l.g1} onChange={(e) => updateLoan(i, 'g1', e.target.value)} placeholder="GS-0001" className={inputCls} />
-                            <input value={l.g2} onChange={(e) => updateLoan(i, 'g2', e.target.value)} placeholder="GS-0002" className={inputCls} />
-                            <input value={l.g3} onChange={(e) => updateLoan(i, 'g3', e.target.value)} placeholder="GS-0003" className={inputCls} />
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                  <Button type="button" variant="outline" size="sm" onClick={addLoan} className="flex items-center gap-1">
-                    <Plus className="h-3.5 w-3.5" /> Add Loan
-                  </Button>
-                </div>
-              )}
-
-              {step === 4 && (
-                <div className="space-y-4">
-                  <p className="text-xs text-muted-foreground">Enter any existing fines (optional).</p>
-                  {fines.length === 0 && (
-                    <div className="text-center py-8 text-muted-foreground text-sm border rounded-md bg-muted/10">No fines to import.</div>
-                  )}
-                  {fines.map((f, i) => (
-                    <div key={i} className="flex items-end gap-2 p-3 bg-muted/20 rounded-md border">
-                      <div className="space-y-1 w-32"><label className="text-[10px] font-semibold">Type</label><select value={f.type} onChange={(e) => updateFine(i, 'type', e.target.value)} className={selectCls}><option value="CONTRIBUTION">Contribution</option><option value="LOAN_INTEREST">Loan Interest</option></select></div>
-                      <div className="space-y-1 flex-1"><label className="text-[10px] font-semibold">Amount</label><input type="number" step="any" value={f.amount} onChange={(e) => updateFine(i, 'amount', Number(e.target.value))} className={inputCls} /></div>
-                      <div className="space-y-1 flex-1"><label className="text-[10px] font-semibold">Paid</label><input type="number" step="any" value={f.paidAmount} onChange={(e) => updateFine(i, 'paidAmount', Number(e.target.value))} className={inputCls} /></div>
-                      <div className="space-y-1 w-24"><label className="text-[10px] font-semibold">Status</label><select value={f.status} onChange={(e) => updateFine(i, 'status', e.target.value)} className={selectCls}><option value="PAID">Paid</option><option value="PENDING">Pending</option><option value="PARTIAL">Partial</option><option value="WAIVED">Waived</option></select></div>
-                      <div className="space-y-1 w-32"><label className="text-[10px] font-semibold">Posted (AD)</label><input type="date" value={f.postedOn} onChange={(e) => updateFine(i, 'postedOn', e.target.value)} className={inputCls} /></div>
-                      <button type="button" onClick={() => removeFine(i)} className="p-1.5 text-destructive hover:bg-destructive/10 rounded"><Trash2 className="h-4 w-4" /></button>
-                    </div>
-                  ))}
-                  <Button type="button" variant="outline" size="sm" onClick={addFine} className="flex items-center gap-1">
-                    <Plus className="h-3.5 w-3.5" /> Add Fine
-                  </Button>
-                </div>
-              )}
-
-              {step === 5 && (
-                <div className="space-y-4">
-                  <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-md space-y-2">
-                    <h3 className="font-semibold text-emerald-800 flex items-center gap-2"><CheckCircle className="h-4 w-4" /> Review & Confirm</h3>
-                    <div className="grid grid-cols-2 gap-2 text-sm">
-                      <div><span className="text-muted-foreground">Name:</span> <strong>{fullName}</strong></div>
-                      <div><span className="text-muted-foreground">Phone:</span> <strong>{phone}</strong></div>
-                      <div><span className="text-muted-foreground">Address:</span> <strong>{permanentAddress}</strong></div>
-                      <div><span className="text-muted-foreground">Monthly:</span> <strong>NPR {monthlyAmount}</strong></div>
-                      <div><span className="text-muted-foreground">Join Date:</span> <strong>{joinDate}</strong></div>
-                    </div>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 border-t pt-3">
+                  <div className="space-y-1">
+                    <label className="text-xs font-semibold">Citizenship / ID No</label>
+                    <input
+                      value={idNumber}
+                      onChange={(e) => setIdNumber(e.target.value)}
+                      placeholder="Encrypted at rest"
+                      className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+                    />
                   </div>
-                  <div className="grid grid-cols-3 gap-4">
-                    <Card className="p-3 text-center"><div className="text-xs text-muted-foreground">Contributions</div><div className="text-lg font-bold">{contributions.length}</div></Card>
-                    <Card className="p-3 text-center"><div className="text-xs text-muted-foreground">Loans</div><div className="text-lg font-bold">{loans.length}</div></Card>
-                    <Card className="p-3 text-center"><div className="text-xs text-muted-foreground">Fines</div><div className="text-lg font-bold">{fines.length}</div></Card>
+                  <div className="space-y-1">
+                    <NepaliDatePicker
+                      name="joinDate"
+                      label="Join Date (BS) *"
+                      required
+                      value={joinDate}
+                      onChange={(iso) => setJoinDate(iso)}
+                      popoverAlign="center"
+                    />
                   </div>
-                  {contributions.length > 0 && (
-                    <div>
-                      <h4 className="text-xs font-bold uppercase text-muted-foreground mb-2">Contribution Summary</h4>
-                      <p className="text-sm">Total Paid: <strong>NPR {contributions.reduce((s, c) => s + c.paidAmount, 0).toLocaleString()}</strong></p>
-                      <p className="text-sm">Pending: <strong>{contributions.filter((c) => c.status !== 'PAID').length} month(s)</strong></p>
-                    </div>
-                  )}
+                  <div className="space-y-1">
+                    <label className="text-xs font-semibold">Monthly Installment (NPR) *</label>
+                    <input
+                      type="number"
+                      step="any"
+                      required
+                      value={monthlyAmount}
+                      onChange={(e) => setMonthlyAmount(e.target.value)}
+                      className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm font-mono"
+                    />
+                  </div>
                 </div>
-              )}
-            </div>
+              </div>
 
-            <CardFooter className="p-4 border-t flex justify-between">
-              <Button type="button" variant="outline" onClick={() => step > 1 ? setStep(step - 1) : setOpen(false)} disabled={loading}>
-                {step === 1 ? 'Cancel' : <><ArrowLeft className="h-4 w-4 mr-1" /> Back</>}
-              </Button>
-              {step < 5 ? (
-                <Button type="button" onClick={() => setStep(step + 1)}>
-                  Next <ArrowRight className="h-4 w-4 ml-1" />
+              {/* SECTION 4: Nominee & Remarks (Optional) */}
+              <div className="rounded-lg border bg-muted/5 p-4 space-y-3">
+                <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                  <Info className="h-3.5 w-3.5" />
+                  Nominee Details & Notes (Optional)
+                </h4>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <input
+                    value={nomineeName}
+                    onChange={(e) => setNomineeName(e.target.value)}
+                    placeholder="Nominee Full Name"
+                    className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+                  />
+                  <input
+                    value={nomineeRelation}
+                    onChange={(e) => setNomineeRelation(e.target.value)}
+                    placeholder="Relation (e.g. Spouse)"
+                    className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+                  />
+                  <input
+                    value={nomineePhone}
+                    onChange={(e) => setNomineePhone(e.target.value)}
+                    placeholder="Nominee Phone"
+                    className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+                  />
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                  <input
+                    value={bankDetails}
+                    onChange={(e) => setBankDetails(e.target.value)}
+                    placeholder="Bank Details (e.g. Nabil Bank - A/C 123...)"
+                    className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+                  />
+                  <input
+                    value={notes}
+                    onChange={(e) => setNotes(e.target.value)}
+                    placeholder="General remarks or notes"
+                    className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+                  />
+                </div>
+              </div>
+
+              {/* Footer */}
+              <CardFooter className="p-0 pt-3 border-t flex justify-end gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setOpen(false)}
+                  disabled={loading}
+                >
+                  Cancel
                 </Button>
-              ) : (
-                <Button onClick={handleSubmit} disabled={loading} className="bg-emerald-600 hover:bg-emerald-700">
-                  {loading ? 'Saving...' : 'Confirm & Create Member'}
+                <Button type="submit" disabled={loading} className="gap-1.5">
+                  <UserPlus className="h-4 w-4" />
+                  {loading ? 'Enrolling Member...' : 'Enroll Existing Member'}
                 </Button>
-              )}
-            </CardFooter>
+              </CardFooter>
+            </form>
           </Card>
         </div>
       )}

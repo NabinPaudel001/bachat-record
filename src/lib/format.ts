@@ -31,7 +31,10 @@ export function formatNPR(amount: Decimal | string | number): string {
 export function formatBSDate(bsYear: number, bsMonth: number, bsDay: number, adDate?: Date): string {
   const bsPart = `${bsYear}-${String(bsMonth).padStart(2, '0')}-${String(bsDay).padStart(2, '0')} BS`;
   if (adDate) {
-    const adPart = adDate.toISOString().split('T')[0];
+    const y = adDate.getUTCFullYear();
+    const m = adDate.getUTCMonth() + 1;
+    const d = adDate.getUTCDate();
+    const adPart = `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
     return `${bsPart} (${adPart})`;
   }
   return bsPart;

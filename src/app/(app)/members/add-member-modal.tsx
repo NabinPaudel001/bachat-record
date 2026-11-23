@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
 import { Plus, X } from 'lucide-react';
 import { addMemberAction } from './actions';
 import { NepaliDatePicker } from '@/components/ui/nepali-date-picker';
@@ -54,6 +55,14 @@ export function AddMemberModal() {
                   {error}
                 </div>
               )}
+
+              {/* Automatic Class D badge */}
+              <div className="rounded-md bg-blue-50/60 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-900/40 p-2.5 flex items-center justify-between text-xs text-blue-900 dark:text-blue-200">
+                <span className="font-medium">Assigned Membership Class:</span>
+                <Badge variant="secondary" className="font-bold text-[11px] bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-100">
+                  Class D (Automatic)
+                </Badge>
+              </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-1">
@@ -122,7 +131,7 @@ export function AddMemberModal() {
                     className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
                   />
                 </div>
-                <NepaliDatePicker name="joinDate" label="Join Date (BS)" required />
+                <NepaliDatePicker name="joinDate" label="Join Date (BS)" required popoverAlign="center" />
                 <div className="space-y-1">
                   <label className="text-xs font-semibold">Monthly Amount (NPR) *</label>
                   <input

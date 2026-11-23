@@ -5,13 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { Pencil, X } from 'lucide-react';
 import { updateMemberAction } from './actions';
-import NepaliDate from 'nepali-date-converter';
-
-const BS_MONTH_NAMES = [
-  'Baisakh', 'Jestha', 'Ashadh', 'Shrawan', 'Bhadra', 'Ashoj',
-  'Kartik', 'Mangsir', 'Poush', 'Magh', 'Falgun', 'Chaitra',
-];
-const BS_YEARS = Array.from({ length: 21 }, (_, i) => 2070 + i);
+import { NepaliDatePicker } from '@/components/ui/nepali-date-picker';
 
 interface EditMemberModalProps {
   member: {
@@ -33,61 +27,6 @@ interface EditMemberModalProps {
   };
 }
 
-function BSDatePickerControlled({
-  value,
-  onChange,
-}: {
-  value: string;
-  onChange: (adIso: string) => void;
-}) {
-  // Parse initial BS date from AD ISO string
-  function getInitialBS() {
-    if (value) {
-      try {
-        const nd = new NepaliDate(new Date(value));
-        return { year: nd.getYear(), month: nd.getMonth() + 1, day: nd.getDate() };
-      } catch {
-        // fall through
-      }
-    }
-    return { year: 2050, month: 1, day: 1 };
-  }
-
-  const init = getInitialBS();
-  const [bsYear, setBsYear] = useState(init.year);
-  const [bsMonth, setBsMonth] = useState(init.month);
-  const [bsDay, setBsDay] = useState(init.day);
-
-  function update(y: number, m: number, d: number) {
-    try {
-      const nd = new NepaliDate(y, m - 1, d);
-      onChange(nd.toJsDate().toISOString().split('T')[0]);
-    } catch {
-      onChange('');
-    }
-  }
-
-  const cls = 'h-9 rounded-md border border-input bg-background px-2 text-sm shadow-sm';
-
-  return (
-    <div className="flex items-center gap-1 flex-wrap">
-      <select value={bsYear} onChange={(e) => { const y = Number(e.target.value); setBsYear(y); update(y, bsMonth, bsDay); }} className={cls}>
-        {BS_YEARS.map((y) => <option key={y} value={y}>{y}</option>)}
-      </select>
-      <select value={bsMonth} onChange={(e) => { const m = Number(e.target.value); setBsMonth(m); update(bsYear, m, bsDay); }} className={cls}>
-        {BS_MONTH_NAMES.map((name, i) => <option key={i + 1} value={i + 1}>{name}</option>)}
-      </select>
-      <select value={bsDay} onChange={(e) => { const d = Number(e.target.value); setBsDay(d); update(bsYear, bsMonth, d); }} className={cls}>
-        {Array.from({ length: 32 }, (_, i) => i + 1).map((d) => <option key={d} value={d}>{d}</option>)}
-      </select>
-      {value && (
-        <span className="text-xs text-muted-foreground font-mono ml-1">
-          {bsYear}-{String(bsMonth).padStart(2, '0')}-{String(bsDay).padStart(2, '0')} BS
-        </span>
-      )}
-    </div>
-  );
-}
 
 const inputClass =
   'h-9 w-full rounded-md border border-input bg-background px-3 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-ring';
@@ -220,10 +159,12 @@ export function EditMemberModal({ member }: EditMemberModalProps) {
                 </div>
               </div>
 
-              <div className="space-y-1">
-                <label className="text-xs font-semibold">Date of Birth (BS)</label>
-                <BSDatePickerControlled value={dobAd} onChange={setDobAd} />
-              </div>
+              <NepaliDatePicker
+                name="dob"
+                label="Date of Birth (BS)"
+                value={dobAd}
+                onChange={(ad) => setDobAd(ad)}
+              />
 
               <div className="space-y-1">
                 <label className="text-xs font-semibold">Citizenship / ID No</label>
